@@ -61,21 +61,29 @@ class PointEditDialog(QDialog):
 
         # Measured Lux
         self.spin_lux = QDoubleSpinBox(self)
-        self.spin_lux.setRange(0.0, 100000.0)
-        self.spin_lux.setValue(point.lux if point.lux is not None else 0.0)
+        self.spin_lux.setRange(-1.0, 100000.0)
+        self.spin_lux.setSpecialValueText("")
+        self.spin_lux.setValue(point.lux if point.lux is not None else -1.0)
         self.spin_lux.setSingleStep(10.0)
         self.spin_lux.setSuffix(" lx")
         self.spin_lux.selectAll()
 
         # Expected Lux
         self.spin_exp = QDoubleSpinBox(self)
-        self.spin_exp.setRange(0.0, 100000.0)
-        self.spin_exp.setValue(point.expected_lux if point.expected_lux is not None else 0.0)
+        self.spin_exp.setRange(-1.0, 100000.0)
+        self.spin_exp.setSpecialValueText("")
+        self.spin_exp.setValue(point.expected_lux if point.expected_lux is not None else -1.0)
         self.spin_exp.setSingleStep(10.0)
         self.spin_exp.setSuffix(" lx")
 
         # Notes
         self.txt_notes = QLineEdit(point.notes, self)
+        self._initial_values = {
+            "x": self.spin_x.value(),
+            "y": self.spin_y.value(),
+            "lux": self.spin_lux.value(),
+            "expected": self.spin_exp.value(),
+        }
 
         g_layout.addWidget(QLabel("X Coordinate:"), 0, 0)
         g_layout.addWidget(self.spin_x, 0, 1)
@@ -102,14 +110,21 @@ class PointEditDialog(QDialog):
 
     def _on_accept(self) -> None:
         if not self.point.locked_coordinates:
-            self.point.x = self.spin_x.value()
-            self.point.y = self.spin_y.value()
+            if self.spin_x.value() != self._initial_values["x"]:
+                self.point.x = self.spin_x.value()
+            if self.spin_y.value() != self._initial_values["y"]:
+                self.point.y = self.spin_y.value()
 
         lux_val = self.spin_lux.value()
-        self.point.record_reading(lux_val)
+        if lux_val != self._initial_values["lux"]:
+            if lux_val < 0:
+                self.point.clear_reading()
+            else:
+                self.point.record_reading(lux_val, device_name="Manual Entry")
 
         exp_val = self.spin_exp.value()
-        self.point.expected_lux = exp_val if exp_val > 0 else None
+        if exp_val != self._initial_values["expected"]:
+            self.point.expected_lux = exp_val if exp_val >= 0 else None
 
         self.point.notes = self.txt_notes.text().strip()
         self.accept()

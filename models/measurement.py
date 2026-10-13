@@ -35,6 +35,8 @@ class MeasurementPoint:
     notes: str = ""
     timestamp: Optional[str] = None
     device_name: Optional[str] = None
+    source_sample_id: Optional[str] = None
+    source_profile_id: Optional[str] = None
     is_possible_outlier: bool = False
     outlier_reason: str = ""
 
@@ -74,6 +76,8 @@ class MeasurementPoint:
         lux_value: float,
         timestamp: Optional[str] = None,
         device_name: Optional[str] = None,
+        source_sample_id: Optional[str] = None,
+        source_profile_id: Optional[str] = None,
     ) -> None:
         """Record a physical lux meter reading with optional metadata."""
         if lux_value < 0:
@@ -82,11 +86,16 @@ class MeasurementPoint:
         self.timestamp = timestamp or datetime.now().isoformat()
         if device_name:
             self.device_name = device_name
+        self.source_sample_id = source_sample_id
+        self.source_profile_id = source_profile_id
 
     def clear_reading(self) -> None:
         """Clear the recorded reading and associated metadata."""
         self.lux = None
         self.timestamp = None
+        self.device_name = None
+        self.source_sample_id = None
+        self.source_profile_id = None
         self.is_possible_outlier = False
         self.outlier_reason = ""
 
@@ -102,6 +111,8 @@ class MeasurementPoint:
             "notes": self.notes,
             "timestamp": self.timestamp,
             "device_name": self.device_name,
+            "source_sample_id": self.source_sample_id,
+            "source_profile_id": self.source_profile_id,
             "is_possible_outlier": self.is_possible_outlier,
             "outlier_reason": self.outlier_reason,
         }
@@ -119,6 +130,8 @@ class MeasurementPoint:
             notes=str(data.get("notes", "")),
             timestamp=data.get("timestamp"),
             device_name=data.get("device_name"),
+            source_sample_id=data.get("source_sample_id"),
+            source_profile_id=data.get("source_profile_id"),
             is_possible_outlier=bool(data.get("is_possible_outlier", False)),
             outlier_reason=str(data.get("outlier_reason", "")),
         )

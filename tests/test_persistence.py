@@ -2,12 +2,14 @@
 
 import os
 import tempfile
+import json
 import pytest
 
 from models.room import Room
 from models.project import LuminationProject
 from models.measurement import MeasurementPoint
 from persistence.project_io import save_project, load_project
+from persistence.recovery import RecoveryStore
 from persistence.csv_io import export_measurements_to_csv, import_measurements_from_csv
 from reporting.pdf_report import generate_pdf_report
 from reporting.chart_exporter import export_room_map_image
@@ -53,6 +55,78 @@ def test_project_json_save_and_load(tmp_path):
     assert loaded.points[0].lux == 350.0
     assert loaded.points[0].expected_lux == 400.0
     assert loaded.points[1].lux == 420.0
+
+
+def test_project_loads_legacy_1_0_and_saves_versioned_resume_extension(tmp_path):
+    project = LuminationProject(name="Legacy room", room=Room(length=5.0, width=4.0))
+    project.points = [MeasurementPoint(id="P1", x=1.0, y=1.0, lux=0.0)]
+    legacy = project.to_dict()
+    legacy["format_version"] = "1.0"
+    legacy["points"][0].pop("source_sample_id", None)
+    legacy["points"][0].pop("source_profile_id", None)
+    legacy.pop("extensions", None)
+    legacy_path = tmp_path / "legacy.luxproj"
+    legacy_path.write_text(json.dumps(legacy), encoding="utf-8")
+
+    loaded = load_project(str(legacy_path))
+    assert loaded.points[0].lux == 0.0
+    assert loaded.points[0].source_sample_id is None
+    assert loaded.points[0].source_profile_id is None
+    assert loaded.resume_state is None
+
+    loaded.points[0].source_sample_id = "sample-123"
+    loaded.points[0].source_profile_id = "meter-profile-v1"
+    loaded.resume_state = {"workspace": "review", "selected_point_id": "P1"}
+    upgraded_path = tmp_path / "upgraded.luxproj"
+    save_project(loaded, str(upgraded_path))
+    saved = json.loads(upgraded_path.read_text(encoding="utf-8"))
+    assert saved["format_version"] == "1.1"
+    assert saved["extensions"]["org.luxious.resume"] == {
+        "version": 1,
+        "workspace": "review",
+        "selected_point_id": "P1",
+    }
+    upgraded = load_project(str(upgraded_path))
+    assert upgraded.points[0].source_sample_id == "sample-123"
+    assert upgraded.points[0].source_profile_id == "meter-profile-v1"
+
+
+def test_failed_atomic_save_preserves_existing_file_and_dirty_state(tmp_path, monkeypatch):
+    project = LuminationProject(name="Atomic write", room=Room(length=5.0, width=4.0))
+    project.is_dirty = True
+    target = tmp_path / "existing.luxproj"
+    target.write_text("previous complete file", encoding="utf-8")
+
+    def fail_replace(source, destination):
+        raise OSError("simulated disk failure")
+
+    monkeypatch.setattr("persistence.project_io.os.replace", fail_replace)
+    with pytest.raises(OSError, match="simulated disk failure"):
+        save_project(project, str(target))
+
+    assert target.read_text(encoding="utf-8") == "previous complete file"
+    assert project.is_dirty is True
+    assert project.file_path is None
+    assert not list(tmp_path.glob("*.tmp"))
+
+
+def test_recovery_store_roundtrip_is_separate_from_named_project(tmp_path):
+    project = LuminationProject(name="Recovery room", room=Room(length=5.0, width=4.0))
+    project.points = [MeasurementPoint(id="P1", x=1.0, y=1.0, lux=0.0)]
+    project.file_path = str(tmp_path / "named.luxproj")
+    recovery = RecoveryStore(str(tmp_path / "appdata" / "recovery.json"))
+
+    recovery.save(project, workspace="review", selected_point_id="P1")
+    restored = recovery.load()
+
+    assert restored is not None
+    assert restored.project.file_path is None
+    assert restored.project.is_dirty is True
+    assert restored.project.points[0].lux == 0.0
+    assert restored.workspace == "review"
+    assert restored.selected_point_id == "P1"
+    recovery.discard()
+    assert recovery.load() is None
 
 
 def test_csv_export_and_import(tmp_path):

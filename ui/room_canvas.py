@@ -13,7 +13,8 @@ Features:
 from __future__ import annotations
 import math
 from typing import Optional, Tuple, Dict, Any, List
-from PySide6.QtCore import Qt, Signal, QPoint, QPointF
+import numpy as np
+from PySide6.QtCore import Qt, Signal, QPoint, QPointF, QLocale
 from PySide6.QtGui import QCursor, QKeySequence, QAction
 from PySide6.QtWidgets import (
     QWidget,
@@ -106,7 +107,10 @@ class PointPopupEditor(QFrame):
     def show_for_point(self, point: MeasurementPoint, screen_pos: QPoint) -> None:
         """Position popup editor directly above the clicked point."""
         self.point_id = point.id
-        cur_val = f"{point.lux:.1f}" if point.is_measured and point.lux is not None else ""
+        locale = QLocale({"en": "en_US", "ro": "ro_RO", "de": "de_DE"}[TranslationManager.get_instance().current_language])
+        locale.setNumberOptions(QLocale.NumberOption.OmitGroupSeparator | QLocale.NumberOption.RejectGroupSeparator)
+        self.txt_lux.setLocale(locale)
+        cur_val = locale.toString(point.lux, 'g', 17) if point.lux is not None else ""
         self.txt_lux.setText(cur_val)
         self.adjustSize()
 
@@ -124,8 +128,8 @@ class PointPopupEditor(QFrame):
         text = self.txt_lux.text().strip()
         if self.point_id:
             try:
-                val = float(text)
-                if val >= 0:
+                val, valid = self.txt_lux.locale().toDouble(text)
+                if valid and math.isfinite(val) and val >= 0:
                     self.value_submitted.emit(self.point_id, val)
             except ValueError:
                 pass
@@ -151,6 +155,9 @@ class RoomCanvasWidget(QWidget):
         self.interp_result: Optional[InterpolationResult] = None
         self.selected_point_id: Optional[str] = None
         self.placement_mode: bool = False
+        self.editing_enabled: bool = False
+        self.recording_enabled: bool = True
+        self._view_room_key = None
 
         # Placement snapping state
         self._preview_pos: Optional[Tuple[float, float]] = None
@@ -224,7 +231,7 @@ class RoomCanvasWidget(QWidget):
 
         self.btn_redo = QPushButton(self)
         self.btn_redo.setIcon(create_redo_icon())
-        self.btn_redo.setToolTip("Redo (Ctrl+Y / Ctrl+X)")
+        self.btn_redo.setToolTip("Redo (Ctrl+Y)")
         self.btn_redo.clicked.connect(self.redo_requested.emit)
 
         # Add / Delete
@@ -295,16 +302,32 @@ class RoomCanvasWidget(QWidget):
         self.project = project
         self.interp_result = interp_result
         self.selected_point_id = selected_point_id
+        self.btn_delete_point.setEnabled(self.editing_enabled and selected_point_id is not None)
         self.redraw()
 
     def set_selected_point_id(self, point_id: Optional[str]) -> None:
         """Update active selection and refresh."""
         self.selected_point_id = point_id
-        self.btn_delete_point.setEnabled(point_id is not None)
+        self.btn_delete_point.setEnabled(self.editing_enabled and point_id is not None)
         self.redraw()
+
+    def set_editing_enabled(self, enabled: bool) -> None:
+        self.editing_enabled = enabled
+        self.btn_add_point.setEnabled(enabled)
+        self.btn_delete_point.setEnabled(enabled and self.selected_point_id is not None)
+        if not enabled and self.placement_mode:
+            self.set_placement_mode(False)
+
+    def set_recording_enabled(self, enabled: bool) -> None:
+        self.recording_enabled = enabled
+        if not enabled:
+            self.popup_editor.hide()
 
     def set_placement_mode(self, enabled: bool) -> None:
         """Toggle interactive sensor placement mode with symmetry snapping."""
+        if enabled and not self.editing_enabled:
+            self.btn_add_point.setChecked(False)
+            return
         self.placement_mode = enabled
         self.btn_add_point.setChecked(enabled)
         self.popup_editor.hide()
@@ -357,7 +380,7 @@ class RoomCanvasWidget(QWidget):
             self.undo_requested.emit()
             event.accept()
             return
-        elif event.matches(QKeySequence.StandardKey.Redo) or (event.modifiers() & Qt.KeyboardModifier.ControlModifier and event.key() == Qt.Key.Key_X):
+        elif event.matches(QKeySequence.StandardKey.Redo):
             self.redo_requested.emit()
             event.accept()
             return
@@ -532,10 +555,12 @@ class RoomCanvasWidget(QWidget):
         if clicked_pt:
             self.selected_point_id = clicked_pt.id
             self.point_selected.emit(clicked_pt.id)
-            self._open_popup_for_point(clicked_pt)
+            if self.recording_enabled and (not clicked_pt.is_measured or self.editing_enabled):
+                self._open_popup_for_point(clicked_pt)
+            else:
+                self.popup_editor.hide()
             self.redraw()
         else:
-            self.selected_point_id = None
             self.popup_editor.hide()
             self.redraw()
 
@@ -548,28 +573,9 @@ class RoomCanvasWidget(QWidget):
         self.popup_editor.show_for_point(point, QPoint(qt_x, qt_y))
 
     def _on_popup_value_submitted(self, point_id: str, lux_val: float) -> None:
-        """Save measurement and advance consecutively to the next point in sequence."""
+        """Request a save; navigation is decided centrally by MainWindow."""
         self.measurement_saved.emit(point_id, lux_val)
-
-        # Advance to next sequential point in walking traversal sequence
-        if not self.project or not self.project.points:
-            self.popup_editor.hide()
-            return
-
-        pts = self.project.points
-        cur_idx = 0
-        for i, p in enumerate(pts):
-            if p.id == point_id:
-                cur_idx = i
-                break
-
-        # Move strictly to (cur_idx + 1) % len(points)
-        next_idx = (cur_idx + 1) % len(pts)
-        next_pt = pts[next_idx]
-
-        self.selected_point_id = next_pt.id
-        self.point_selected.emit(next_pt.id)
-        self._open_popup_for_point(next_pt)
+        self.popup_editor.hide()
         self.redraw()
 
     def _find_nearest_point(self, x: float, y: float, max_dist: float = 0.20) -> Optional[MeasurementPoint]:
@@ -589,6 +595,9 @@ class RoomCanvasWidget(QWidget):
         if not self.project:
             return
 
+        room_key = (id(self.project), self.project.room.length, self.project.room.width)
+        view = (self.ax.get_xlim(), self.ax.get_ylim()) if room_key == self._view_room_key else None
+
         render_room_map(
             ax=self.ax,
             project=self.project,
@@ -600,5 +609,10 @@ class RoomCanvasWidget(QWidget):
             snap_guides=self._snap_guides,
             snap_label=self._snap_label,
         )
+
+        if view is not None:
+            self.ax.set_xlim(view[0])
+            self.ax.set_ylim(view[1])
+        self._view_room_key = room_key
 
         self.canvas.draw_idle()

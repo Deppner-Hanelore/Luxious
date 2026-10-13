@@ -11,15 +11,17 @@ Optimized for real-world room walking workflow:
 """
 
 from __future__ import annotations
+import math
 from typing import Optional, List
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QLocale
+from PySide6.QtGui import QDoubleValidator
 from PySide6.QtWidgets import (
     QWidget,
     QHBoxLayout,
     QVBoxLayout,
     QLabel,
     QLineEdit,
-    QDoubleSpinBox,
+    QComboBox,
     QPushButton,
     QProgressBar,
     QFrame,
@@ -46,6 +48,8 @@ class SurveyModeWidget(QFrame):
 
         self.project: Optional[LuminationProject] = None
         self.active_point_id: Optional[str] = None
+        self.recording_allowed = True
+        self.correction_allowed = False
 
         self.setFrameShape(QFrame.Shape.StyledPanel)
         self.setStyleSheet("""
@@ -65,16 +69,19 @@ class SurveyModeWidget(QFrame):
         self.lbl_coords.setStyleSheet("font-size: 11px; color: #64748b;")
 
         # 2. Lux Entry SpinBox
-        self.spin_lux = QDoubleSpinBox(self)
-        self.spin_lux.setRange(0.0, 150000.0)
-        self.spin_lux.setDecimals(1)
-        self.spin_lux.setSingleStep(10.0)
-        self.spin_lux.setSuffix(" lx")
-        self.spin_lux.setMinimumWidth(110)
-        self.spin_lux.setStyleSheet("font-size: 13px; font-weight: bold; padding: 3px 6px;")
+        self.edit_lux = QLineEdit(self)
+        self.edit_lux.setObjectName("manualLuxEntry")
+        self.edit_lux.setPlaceholderText("Enter lux")
+        self.edit_lux.setAccessibleName("Manual illuminance reading in lux")
+        self.edit_lux.setValidator(QDoubleValidator(0.0, 150000.0, -1, self))
+        self._set_input_locale()
+        self.edit_lux.setMinimumSize(112, 48)
+        self.edit_lux.setStyleSheet("font-size: 13px; font-weight: bold; padding: 3px 6px;")
+        self.lbl_lux_unit = QLabel("lx", self)
 
         # 3. Action Buttons (No emojis, crisp readable text)
-        self.btn_save_next = QPushButton(f"{tr('survey_save_next')} (Enter)", self)
+        self.btn_save_next = QPushButton(f"{tr('survey_record_next')} (Enter)", self)
+        self.btn_save_next.setMinimumSize(150, 48)
         self.btn_save_next.setStyleSheet("""
             QPushButton {
                 background-color: #2563eb;
@@ -85,18 +92,31 @@ class SurveyModeWidget(QFrame):
                 border: 1px solid #1d4ed8;
             }
             QPushButton:hover { background-color: #1d4ed8; }
+            QPushButton:disabled {
+                background-color: #e2e8f0;
+                color: #52606d;
+                border-color: #cbd5e1;
+            }
         """)
         self.btn_prev = QPushButton(tr("survey_prev"), self)
         self.btn_next = QPushButton(tr("survey_next"), self)
         self.btn_next_unmeasured = QPushButton(tr("survey_next_unmeasured"), self)
+        self.btn_prev.setMinimumHeight(44)
+        self.btn_next.setText(tr("survey_skip_point"))
+        self.btn_next.setMinimumHeight(44)
+        self.btn_next_unmeasured.setMinimumHeight(44)
+        self.combo_points = QComboBox(self)
+        self.combo_points.setAccessibleName(tr("survey_select_point"))
+        self.combo_points.setMinimumHeight(44)
 
         self.btn_save_next.clicked.connect(self._save_and_advance)
         self.btn_prev.clicked.connect(self._go_previous)
         self.btn_next.clicked.connect(self._go_next)
         self.btn_next_unmeasured.clicked.connect(self._go_next_unmeasured)
+        self.combo_points.currentIndexChanged.connect(self._on_point_combo_changed)
 
         # Connect Enter key inside spinbox
-        self.spin_lux.lineEdit().returnPressed.connect(self._save_and_advance)
+        self.edit_lux.returnPressed.connect(self._save_and_advance)
 
         # 4. Progress bar & completion counter
         self.lbl_progress = QLabel(f"{tr('survey_progress')} 0 / 0 (0%)", self)
@@ -140,22 +160,34 @@ class SurveyModeWidget(QFrame):
 
         top_row.addWidget(self.lbl_point_id)
         top_row.addWidget(self.lbl_coords)
-        top_row.addSpacing(6)
-        self.lbl_reading_tag = QLabel(tr("survey_reading"), self)
-        top_row.addWidget(self.lbl_reading_tag)
-        top_row.addWidget(self.spin_lux)
-        top_row.addWidget(self.btn_save_next)
-        top_row.addWidget(self.btn_prev)
-        top_row.addWidget(self.btn_next)
-        top_row.addWidget(self.btn_next_unmeasured)
+        top_row.addWidget(self.combo_points)
         top_row.addStretch()
         top_row.addWidget(self.lbl_progress)
         top_row.addWidget(self.progress_bar)
+
+        control_row = QHBoxLayout()
+        control_row.setContentsMargins(0, 0, 0, 0)
+        control_row.setSpacing(8)
+        self.lbl_reading_tag = QLabel(tr("survey_reading"), self)
+        self.lbl_source_mode = QLabel("Manual entry", self)
+        self.lbl_source_mode.setObjectName("manualSourceLabel")
+        self.lbl_source_mode.setAccessibleName("Selected reading source: manual entry")
+        self.lbl_source_mode.setToolTip("Enter a lux value from the instrument display. No connection is required.")
+        control_row.addWidget(self.lbl_reading_tag)
+        control_row.addWidget(self.lbl_source_mode)
+        control_row.addWidget(self.edit_lux)
+        control_row.addWidget(self.lbl_lux_unit)
+        control_row.addWidget(self.btn_save_next)
+        control_row.addWidget(self.btn_prev)
+        control_row.addWidget(self.btn_next)
+        control_row.addWidget(self.btn_next_unmeasured)
+        control_row.addStretch()
 
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(2, 2, 2, 2)
         main_layout.setSpacing(3)
         main_layout.addLayout(top_row)
+        main_layout.addLayout(control_row)
         main_layout.addWidget(self.lbl_outlier_warning)
 
         TranslationManager.get_instance().language_changed.connect(self.retranslate_ui)
@@ -163,19 +195,42 @@ class SurveyModeWidget(QFrame):
     def retranslate_ui(self) -> None:
         """Update strings on language change."""
         self.lbl_reading_tag.setText(tr("survey_reading"))
-        self.btn_save_next.setText(f"{tr('survey_save_next')} (Enter)")
+        self.btn_save_next.setText(f"{tr('survey_record_next')} (Enter)")
         self.btn_prev.setText(tr("survey_prev"))
-        self.btn_next.setText(tr("survey_next"))
+        self.btn_next.setText(tr("survey_skip_point"))
         self.btn_next_unmeasured.setText(tr("survey_next_unmeasured"))
-        self.set_active_point(self.active_point_id)
+        self.btn_save_next.setText(f"{tr('survey_record_next')} (Enter)")
+        self.combo_points.setAccessibleName(tr("survey_select_point"))
+        draft, valid_draft = self.edit_lux.locale().toDouble(self.edit_lux.text())
+        point = self.project.find_point_by_id(self.active_point_id) if self.project and self.active_point_id else None
+        self._set_input_locale()
+        if self.project:
+            self.set_project(self.project, self.active_point_id)
+        if valid_draft and point and not point.is_measured:
+            self.edit_lux.setText(self.edit_lux.locale().toString(draft, 'g', 17))
+
+    def _set_input_locale(self) -> None:
+        language = TranslationManager.get_instance().current_language
+        locale = QLocale({"en": "en_US", "ro": "ro_RO", "de": "de_DE"}[language])
+        locale.setNumberOptions(QLocale.NumberOption.OmitGroupSeparator | QLocale.NumberOption.RejectGroupSeparator)
+        self.edit_lux.setLocale(locale)
+        self.edit_lux.validator().setLocale(locale)
 
     def set_project(self, project: LuminationProject, active_point_id: Optional[str] = None) -> None:
         """Bind project reference and activate point."""
         self.project = project
+        self.combo_points.blockSignals(True)
+        self.combo_points.clear()
+        for point in project.points:
+            state = tr("survey_recorded") if point.is_measured else tr("survey_pending")
+            self.combo_points.addItem(f"{point.id} · {state}", point.id)
+        self.combo_points.blockSignals(False)
         if active_point_id:
             self.set_active_point(active_point_id)
         elif project and project.points:
             self.set_active_point(project.points[0].id)
+        else:
+            self.set_active_point(None)
         self.update_progress()
 
     def set_active_point(self, point_id: Optional[str]) -> None:
@@ -185,23 +240,32 @@ class SurveyModeWidget(QFrame):
             self.lbl_point_id.setText(f"{tr('survey_point')} --")
             self.lbl_coords.setText("(X: -- m, Y: -- m)")
             self.lbl_outlier_warning.setVisible(False)
+            self.edit_lux.clear()
+            self.btn_save_next.setEnabled(False)
+            self._update_navigation_controls()
             return
 
         pt = self.project.find_point_by_id(point_id)
         if pt:
-            status_str = f"[{tr('survey_completed')}]" if pt.is_measured else "[Pending]"
+            status_str = f"[{tr('survey_recorded')}]" if pt.is_measured else f"[{tr('survey_pending')}]"
             self.lbl_point_id.setText(f"{tr('survey_point')} {pt.id} {status_str}")
             self.lbl_coords.setText(f"(X: {pt.x:.2f} m, Y: {pt.y:.2f} m)")
 
-            self.spin_lux.blockSignals(True)
+            self.edit_lux.blockSignals(True)
             if pt.is_measured and pt.lux is not None:
-                self.spin_lux.setValue(pt.lux)
+                self.edit_lux.setText(self.edit_lux.locale().toString(pt.lux, 'g', 17))
             else:
-                self.spin_lux.setValue(0.0)
-            self.spin_lux.blockSignals(False)
-
-            self.spin_lux.selectAll()
-            self.spin_lux.setFocus()
+                self.edit_lux.clear()
+            self.edit_lux.blockSignals(False)
+            combo_index = self.combo_points.findData(point_id)
+            if combo_index >= 0:
+                self.combo_points.blockSignals(True)
+                self.combo_points.setCurrentIndex(combo_index)
+                self.combo_points.blockSignals(False)
+            self.btn_save_next.setEnabled(
+                self.recording_allowed and (not pt.is_measured or self.correction_allowed)
+            )
+            self.btn_save_next.setToolTip("Use Edit survey to correct a recorded reading." if pt.is_measured else "Record this value for the selected point.")
 
             # Show outlier badge if flagged
             if pt.is_possible_outlier and pt.outlier_reason:
@@ -211,6 +275,7 @@ class SurveyModeWidget(QFrame):
                 self.lbl_outlier_warning.setVisible(False)
 
         self.update_progress()
+        self._update_navigation_controls()
 
     def update_progress(self) -> None:
         """Update progress bar and completion count."""
@@ -232,35 +297,37 @@ class SurveyModeWidget(QFrame):
             return
 
         pt = self.project.find_point_by_id(self.active_point_id)
-        if not pt:
+        if not pt or not self.recording_allowed or (pt.is_measured and not self.correction_allowed):
             return
 
-        lux_val = self.spin_lux.value()
+        raw_value = self.edit_lux.text().strip()
+        if not raw_value:
+            self.lbl_outlier_warning.setText("Enter a reading first. A blank field remains pending.")
+            self.lbl_outlier_warning.setVisible(True)
+            return
+        lux_val, ok = self.edit_lux.locale().toDouble(raw_value)
+        if not ok or not math.isfinite(lux_val) or lux_val < 0 or lux_val > 150000:
+            self.lbl_outlier_warning.setText("Enter a valid lux value from 0 to 150000.")
+            self.lbl_outlier_warning.setVisible(True)
+            return
         self.measurement_saved.emit(pt.id, lux_val)
         self.update_progress()
-
-        # Sequential walking traversal: move directly to (cur_idx + 1) % n
-        self._go_next()
 
     def _go_previous(self) -> None:
         """Navigate to previous point in project point sequence."""
         if not self.project or not self.project.points:
             return
         cur_idx = self._get_current_index()
-        prev_idx = (cur_idx - 1) % len(self.project.points)
+        if cur_idx <= 0:
+            return
+        prev_idx = cur_idx - 1
         target_id = self.project.points[prev_idx].id
         self.set_active_point(target_id)
         self.point_navigated.emit(target_id)
 
     def _go_next(self) -> None:
-        """Navigate to next sequential point."""
-        if not self.project or not self.project.points:
-            return
-        cur_idx = self._get_current_index()
-        next_idx = (cur_idx + 1) % len(self.project.points)
-        target_id = self.project.points[next_idx].id
-        self.set_active_point(target_id)
-        self.point_navigated.emit(target_id)
+        """Leave this point pending and navigate to the next pending point."""
+        self._go_next_unmeasured()
 
     def _go_next_unmeasured(self) -> None:
         """Find and navigate to the next unmeasured point following current sequence."""
@@ -279,8 +346,7 @@ class SurveyModeWidget(QFrame):
                 self.point_navigated.emit(target_id)
                 return
 
-        # If all measured, go to next sequential
-        self._go_next()
+        self.lbl_point_id.setText(tr("survey_complete"))
 
     def _get_current_index(self) -> int:
         if not self.project or not self.active_point_id:
@@ -289,3 +355,27 @@ class SurveyModeWidget(QFrame):
             if p.id == self.active_point_id:
                 return i
         return 0
+
+    def _on_point_combo_changed(self, index: int) -> None:
+        point_id = self.combo_points.itemData(index)
+        if point_id:
+            self.set_active_point(str(point_id))
+            self.point_navigated.emit(str(point_id))
+
+    def set_workflow_permissions(self, recording: bool, correction: bool) -> None:
+        self.recording_allowed = recording
+        self.correction_allowed = correction
+        point = self.project.find_point_by_id(self.active_point_id) if self.project and self.active_point_id else None
+        self.btn_save_next.setEnabled(
+            bool(recording and point and (not point.is_measured or correction))
+        )
+        self.edit_lux.setEnabled(self.btn_save_next.isEnabled())
+
+    def _update_navigation_controls(self) -> None:
+        points = self.project.points if self.project else []
+        has_other_pending = any(not p.is_measured and p.id != self.active_point_id for p in points)
+        self.btn_prev.setEnabled(bool(points) and self._get_current_index() > 0)
+        self.btn_next.setEnabled(has_other_pending)
+        self.btn_next_unmeasured.setEnabled(has_other_pending)
+        self.combo_points.setEnabled(bool(points))
+        self.set_workflow_permissions(self.recording_allowed, self.correction_allowed)
