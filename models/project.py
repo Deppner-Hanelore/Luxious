@@ -89,6 +89,8 @@ class LuminationProject:
     visualization_settings: VisualizationSettings = field(default_factory=VisualizationSettings)
     file_path: Optional[str] = None
     is_dirty: bool = False
+    resume_state: Optional[Dict[str, Any]] = None
+    is_practice: bool = False
 
     def mark_modified(self) -> None:
         """Mark project as containing unsaved changes and update timestamp."""
@@ -212,11 +214,12 @@ class LuminationProject:
 
     def to_dict(self) -> Dict[str, Any]:
         """Serialize project to dictionary."""
-        return {
-            "format_version": "1.0",
+        data = {
+            "format_version": "1.1",
             "name": self.name,
             "description": self.description,
             "author": self.author,
+            "is_practice": self.is_practice,
             "created_at": self.created_at,
             "modified_at": self.modified_at,
             "target_lux": self.target_lux,
@@ -224,22 +227,68 @@ class LuminationProject:
             "points": [p.to_dict() for p in self.points],
             "visualization_settings": self.visualization_settings.to_dict(),
         }
+        if self.resume_state is not None:
+            workspace = self.resume_state.get("workspace", "survey")
+            if workspace not in ("survey", "review"):
+                workspace = "survey"
+            selected_id = self.resume_state.get("selected_point_id")
+            valid_ids = {point.id for point in self.points}
+            if selected_id not in valid_ids:
+                selected_id = None
+            data["extensions"] = {
+                "org.luxious.resume": {
+                    "version": 1,
+                    "workspace": workspace,
+                    "selected_point_id": selected_id,
+                }
+            }
+        return data
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> LuminationProject:
         """Create LuminationProject from dictionary."""
+        format_version = str(data.get("format_version", "1.0"))
+        try:
+            major_version = int(format_version.split(".", 1)[0])
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"Unsupported project format version: {format_version}") from exc
+        if major_version > 1:
+            raise ValueError(
+                f"Project format {format_version} is newer than this version of Luxious supports. "
+                "Update Luxious to open this file."
+            )
+
         room = Room.from_dict(data["room"])
         points = [MeasurementPoint.from_dict(p) for p in data.get("points", [])]
         vis_settings = VisualizationSettings.from_dict(data.get("visualization_settings", {}))
+        extensions = data.get("extensions", {})
+        if not isinstance(extensions, dict):
+            extensions = {}
+        extension = extensions.get("org.luxious.resume", {})
+        if not isinstance(extension, dict):
+            extension = {}
+        resume_state = None
+        if extension.get("version") == 1:
+            workspace = extension.get("workspace", "survey")
+            if workspace not in ("survey", "review"):
+                workspace = "survey"
+            selected_id = extension.get("selected_point_id")
+            valid_ids = {point.id for point in points}
+            resume_state = {
+                "workspace": workspace,
+                "selected_point_id": selected_id if selected_id in valid_ids else None,
+            }
 
         return cls(
             name=str(data.get("name", "Unnamed Project")),
             description=str(data.get("description", "")),
             author=str(data.get("author", "")),
+            is_practice=bool(data.get("is_practice", False)),
             created_at=str(data.get("created_at", datetime.now().isoformat())),
             modified_at=str(data.get("modified_at", datetime.now().isoformat())),
             target_lux=float(data["target_lux"]) if data.get("target_lux") is not None else None,
             room=room,
             points=points,
             visualization_settings=vis_settings,
+            resume_state=resume_state,
         )

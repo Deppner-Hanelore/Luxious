@@ -44,7 +44,8 @@ class KPICard(QFrame):
         self.clickable = clickable
         self.setFrameShape(QFrame.Shape.StyledPanel)
 
-        cursor_style = "cursor: pointer;" if clickable else ""
+        if clickable:
+            self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setStyleSheet(f"""
             QFrame {{
                 background-color: #ffffff;
@@ -52,7 +53,6 @@ class KPICard(QFrame):
                 border-left: 3.5px solid {accent_color};
                 border-radius: 4px;
                 padding: 4px 8px;
-                {cursor_style}
             }}
             QFrame:hover {{
                 border-color: {accent_color};

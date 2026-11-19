@@ -105,6 +105,13 @@ def main() -> int:
     t_visible = time.perf_counter() - _T_START
     log_startup(f"MainWindow visible ({t_visible:.4f} s)")
 
+    if "--smoke-test" in sys.argv:
+        from utils.build_smoke import run_smoke_test
+        index = sys.argv.index("--smoke-test")
+        if index + 1 >= len(sys.argv):
+            return 2
+        return run_smoke_test(app, window, sys.argv[index + 1])
+
     # Event loop responsive callback
     def _on_event_loop_ready() -> None:
         t_responsive = time.perf_counter() - _T_START

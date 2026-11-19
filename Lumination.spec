@@ -5,10 +5,8 @@ Packages all core and lazy-loaded modules (PySide6, NumPy, SciPy, Matplotlib, Re
 into a standalone Windows desktop executable with zero console window.
 """
 
-import sys
 import os
 
-block_cipher = None
 project_dir = os.path.abspath(SPECPATH)
 
 hidden_imports = [
@@ -21,16 +19,11 @@ hidden_imports = [
     
     # NumPy & Scientific stack
     'numpy',
-    'numpy.core._methods',
-    'numpy.lib.format',
     
     # SciPy (lazy-loaded modules)
     'scipy',
     'scipy.interpolate',
-    'scipy.interpolate.griddata',
-    'scipy.interpolate.RBFInterpolator',
     'scipy.spatial',
-    'scipy.spatial.qhull',
     'scipy.spatial.distance',
     'scipy.special',
     
@@ -77,14 +70,18 @@ hidden_imports = [
     'measurement_sources.mock',
     'measurement_sources.usb_serial',
     'measurement_sources.bluetooth_meter',
+    'measurement_sources.device_session',
     'persistence.project_io',
     'persistence.csv_io',
+    'persistence.recovery',
     'reporting.pdf_report',
     'reporting.chart_exporter',
     'ui.styles',
     'ui.main_window',
     'ui.room_canvas',
     'ui.survey_mode_widget',
+    'ui.start_screen',
+    'ui.workflow_controller',
     'ui.measurement_table',
     'ui.results_panel',
     'ui.target_panel',
@@ -95,13 +92,16 @@ hidden_imports = [
     'ui.dialogs.point_edit_dialog',
     'ui.dialogs.export_dialog',
     'ui.dialogs.hardware_connection_dialog',
+    'ui.dialogs.survey_setup_dialog',
+    'ui.dialogs.import_preview_dialog',
     'i18n.translations',
     'utils.undo_commands',
+    'utils.build_smoke',
     'ui.icons',
 ]
 
 a = Analysis(
-    ['main.py'],
+    [os.path.join(project_dir, 'main.py')],
     pathex=[project_dir],
     binaries=[],
     datas=[],
@@ -110,13 +110,10 @@ a = Analysis(
     hooksconfig={},
     runtime_hooks=[],
     excludes=['tkinter', 'pandas', 'IPython', 'jupyter'],
-    win_no_prefer_redirects=False,
-    win_private_assemblies=False,
-    cipher=block_cipher,
     noarchive=False,
 )
 
-pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
+pyz = PYZ(a.pure)
 
 exe = EXE(
     pyz,
@@ -127,7 +124,7 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx=False,
     console=False,  # No command prompt window
     disable_windowed_traceback=False,
     argv_emulation=False,
@@ -139,10 +136,9 @@ exe = EXE(
 coll = COLLECT(
     exe,
     a.binaries,
-    a.zipfiles,
     a.datas,
     strip=False,
-    upx=True,
+    upx=False,
     upx_exclude=[],
     name='Lumination',
 )

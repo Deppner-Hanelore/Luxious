@@ -55,7 +55,7 @@ def _check_collinearity(points_xy: np.ndarray, tol: float = 1e-4) -> bool:
     return False
 
 
-def _merge_duplicate_points(points: Sequence[MeasurementPoint], tol: float = 0.005) -> Tuple[np.ndarray, np.ndarray, List[str]]:
+def _merge_duplicate_points(points: Sequence[MeasurementPoint], tol: float = 0.005, allow_negative: bool = False) -> Tuple[np.ndarray, np.ndarray, List[str]]:
     """Merge duplicate coordinates by averaging their lux values.
 
     Returns:
@@ -66,7 +66,7 @@ def _merge_duplicate_points(points: Sequence[MeasurementPoint], tol: float = 0.0
     merged_ids: List[str] = []
 
     for p in points:
-        if not p.is_measured or p.lux is None or p.lux < 0:
+        if not p.is_measured or p.lux is None or not np.isfinite(p.lux) or (p.lux < 0 and not allow_negative):
             continue
 
         # Check if already in merged
@@ -98,6 +98,7 @@ def reconstruct_illuminance_field(
     resolution: int = 150,
     method: str = "linear",
     extrapolate_to_walls: bool = False,
+    allow_negative: bool = False,
 ) -> InterpolationResult:
     """Numerically reconstruct the continuous 2D illuminance distribution across the room.
 
@@ -107,6 +108,7 @@ def reconstruct_illuminance_field(
         resolution: Number of grid sampling points along the longest room dimension.
         method: Requested method: "linear" (default), "cubic", "rbf", or "nearest".
         extrapolate_to_walls: If False, values outside the convex hull of measured points are NaN.
+        allow_negative: Preserve signed values for difference maps only.
 
     Returns:
         InterpolationResult containing the meshgrid, interpolated lux values, and metadata.
@@ -124,7 +126,7 @@ def reconstruct_illuminance_field(
     grid_x, grid_y = np.meshgrid(gx, gy)
 
     # 2. Extract and sanitize measured points
-    xy, lux, _ = _merge_duplicate_points(points)
+    xy, lux, _ = _merge_duplicate_points(points, allow_negative=allow_negative)
     n_pts = len(lux)
 
     if n_pts == 0:
@@ -231,7 +233,7 @@ def reconstruct_illuminance_field(
             rbf = RBFInterpolator(xy, lux, kernel="thin_plate_spline", smoothing=0.0)
             pts_eval = np.column_stack([grid_x.ravel(), grid_y.ravel()])
             z_eval = rbf(pts_eval).reshape(grid_x.shape)
-            grid_z = np.clip(z_eval, 0.0, None)  # Illuminance cannot be negative
+            grid_z = z_eval if allow_negative else np.clip(z_eval, 0.0, None)
 
             # If not extrapolating to walls, mask outside convex hull
             if not extrapolate_to_walls and hull_pts is not None:
@@ -246,7 +248,8 @@ def reconstruct_illuminance_field(
     if used_method == "linear":
         try:
             grid_z = griddata(xy, lux, (grid_x, grid_y), method="linear")
-            grid_z = np.clip(grid_z, 0.0, None)
+            if not allow_negative:
+                grid_z = np.clip(grid_z, 0.0, None)
         except Exception as e:
             used_method = "nearest"
             is_fallback = True
@@ -255,7 +258,8 @@ def reconstruct_illuminance_field(
     if used_method == "nearest":
         try:
             grid_z = griddata(xy, lux, (grid_x, grid_y), method="nearest")
-            grid_z = np.clip(grid_z, 0.0, None)
+            if not allow_negative:
+                grid_z = np.clip(grid_z, 0.0, None)
         except Exception as e:
             return InterpolationResult(
                 grid_x=grid_x,

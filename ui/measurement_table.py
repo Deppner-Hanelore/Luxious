@@ -5,6 +5,7 @@ inline editing with validation, and multi-language header translation.
 """
 
 from __future__ import annotations
+import math
 from typing import Optional, List
 from PySide6.QtCore import Qt, Signal, QAbstractTableModel, QModelIndex
 from PySide6.QtWidgets import (
@@ -27,9 +28,12 @@ from i18n.translations import tr, TranslationManager
 class MeasurementTableModel(QAbstractTableModel):
     """Data model for the measurement table."""
 
+    edit_requested = Signal(str, int, object)
+
     def __init__(self, project: Optional[LuminationProject] = None) -> None:
         super().__init__()
         self.project = project
+        self.edit_allowed = False
 
     def get_columns(self) -> List[str]:
         return [
@@ -71,9 +75,9 @@ class MeasurementTableModel(QAbstractTableModel):
             elif col == 2:
                 return f"{p.y:.3f}" if role == Qt.ItemDataRole.DisplayRole else p.y
             elif col == 3:
-                return f"{p.lux:.1f}" if p.lux is not None else ""
+                return (p.lux if role == Qt.ItemDataRole.EditRole else f"{p.lux:.1f}") if p.lux is not None else ""
             elif col == 4:
-                return f"{p.expected_lux:.1f}" if p.expected_lux is not None else ""
+                return (p.expected_lux if role == Qt.ItemDataRole.EditRole else f"{p.expected_lux:.1f}") if p.expected_lux is not None else ""
             elif col == 5:
                 return f"{p.delta_lux:+.1f}" if p.delta_lux is not None else ""
             elif col == 6:
@@ -92,39 +96,33 @@ class MeasurementTableModel(QAbstractTableModel):
         if not index.isValid():
             return Qt.ItemFlag.NoItemFlags
 
-        # Allow editing lux, expected, and notes
-        if index.column() in (3, 4, 7):
+        if self.edit_allowed and index.column() in (3, 4, 7):
             return Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEditable
 
         return Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
 
     def setData(self, index: QModelIndex, value, role: int = Qt.ItemDataRole.EditRole) -> bool:
-        if not self.project or not index.isValid() or role != Qt.ItemDataRole.EditRole:
+        if (
+            not self.project
+            or not self.edit_allowed
+            or not index.isValid()
+            or role != Qt.ItemDataRole.EditRole
+        ):
             return False
 
-        p = self.project.points[index.row()]
+        point = self.project.points[index.row()]
         col = index.column()
-
         try:
-            if col == 3:  # Measured Lux
-                val_str = str(value).strip()
-                if not val_str:
-                    p.clear_reading()
-                else:
-                    v = float(val_str)
-                    if v < 0:
-                        return False
-                    p.record_reading(v, device_name="Table Input")
-            elif col == 4:  # Expected Lux
-                val_str = str(value).strip()
-                p.expected_lux = float(val_str) if val_str else None
-            elif col == 7:  # Notes
-                p.notes = str(value).strip()
-            else:
+            if col not in (3, 4, 7):
                 return False
-
-            self.project.mark_modified()
-            self.dataChanged.emit(index, index, [Qt.ItemDataRole.DisplayRole])
+            if col in (3, 4) and str(value).strip():
+                parsed = float(str(value).strip())
+                if not math.isfinite(parsed) or parsed < 0:
+                    return False
+                value = parsed
+            elif col in (3, 4):
+                value = None
+            self.edit_requested.emit(point.id, col, value)
             return True
         except ValueError:
             return False
@@ -141,6 +139,7 @@ class MeasurementTableWidget(QWidget):
 
         self.project: Optional[LuminationProject] = None
         self.model = MeasurementTableModel()
+        self.model.edit_requested.connect(self._on_edit_requested)
 
         self.table_view = QTableView(self)
         self.table_view.setModel(self.model)
@@ -172,6 +171,15 @@ class MeasurementTableWidget(QWidget):
 
     def refresh(self) -> None:
         self.model.layoutChanged.emit()
+
+    def set_edit_allowed(self, allowed: bool) -> None:
+        self.model.edit_allowed = allowed
+        self.model.layoutChanged.emit()
+
+    def _on_edit_requested(self, point_id: str, column: int, value: object) -> None:
+        self.edit_requested.emit(point_id, column, value)
+
+    edit_requested = Signal(str, int, object)
 
     def select_point(self, point_id: str) -> None:
         if not self.project:

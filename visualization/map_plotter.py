@@ -7,6 +7,7 @@ Renders ultra-clean, full-viewport 2D room plans:
 """
 
 from __future__ import annotations
+import copy
 from typing import Optional, List, Tuple, Dict, Any
 import numpy as np
 import matplotlib.pyplot as plt
@@ -94,10 +95,11 @@ def render_room_map(
             for p in points if p.expected_lux is not None
         ]
     elif display_mode == "difference":
-        valid_points = [
-            MeasurementPoint(id=p.id, x=p.x, y=p.y, lux=p.delta_lux, locked_coordinates=p.locked_coordinates)
-            for p in points if p.delta_lux is not None
-        ]
+        for point in points:
+            if point.delta_lux is not None:
+                display_point = copy.copy(point)
+                display_point.lux = point.delta_lux  # Only the display field may be signed.
+                valid_points.append(display_point)
     else:
         valid_points = [p for p in points if p.is_measured and p.lux is not None]
 
@@ -109,6 +111,7 @@ def render_room_map(
                 resolution=100,
                 method=settings.interpolation_method,
                 extrapolate_to_walls=False,
+                allow_negative=display_mode == "difference",
             )
 
         if interp_result is not None and interp_result.success and not np.all(np.isnan(interp_result.grid_z)):

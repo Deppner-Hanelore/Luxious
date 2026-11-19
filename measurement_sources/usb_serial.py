@@ -1,7 +1,7 @@
-"""USB Serial Lux Meter Hardware Driver.
+"""USB serial transport reader for inspecting unverified numeric lines.
 
-Supports Extech, Testo, Voltcraft, PeakTech, CEM, Uni-T, and generic ASCII/SCPI lux meters.
-Features auto COM port discovery, background threaded polling/streaming, and robust error recovery.
+No meter model is currently qualified for physical capture. Raw parsed values
+remain diagnostic until a model-specific profile is implemented and validated.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ except ImportError:
 
 
 class USBSerialMeterSource(MeasurementSource):
-    """USB Serial connection driver for physical lux meters."""
+    """Open serial transport and expose raw values without claiming meter support."""
 
     live_reading_stream = Signal(float)
     connection_status_changed = Signal(bool, str)
@@ -35,10 +35,13 @@ class USBSerialMeterSource(MeasurementSource):
         self.is_running: bool = False
         self._thread: Optional[threading.Thread] = None
         self.latest_lux: Optional[float] = None
+        self.profile_id: Optional[str] = None
+        self.capture_supported = False
+        self.freshness_seconds: Optional[float] = None
         self._is_connected = False
 
     def get_source_name(self) -> str:
-        return "USB Lux Meter"
+        return "USB Serial (unverified profile)"
 
     def connect_source(self) -> bool:
         if self.port_name:
@@ -56,14 +59,12 @@ class USBSerialMeterSource(MeasurementSource):
     def list_available_ports(cls) -> List[Tuple[str, str]]:
         """List available physical/virtual USB COM ports with descriptions."""
         if not SERIAL_AVAILABLE:
-            return [("COM_MOCK", "Simulated Virtual Lux Meter (No pyserial)")]
+            return []
 
         ports = []
         for p in serial.tools.list_ports.comports():
             ports.append((p.device, f"{p.device} - {p.description}"))
 
-        if not ports:
-            ports.append(("COM1", "COM1 - Serial Port"))
         return ports
 
     def connect_port(self, port: str, baud: int = 9600, timeout: float = 1.0) -> Tuple[bool, str]:
@@ -72,13 +73,14 @@ class USBSerialMeterSource(MeasurementSource):
         self.port_name = port
         self.baud_rate = baud
 
-        if not SERIAL_AVAILABLE or port == "COM_MOCK":
-            self._is_connected = True
-            self.is_running = True
-            self._thread = threading.Thread(target=self._mock_stream_loop, daemon=True)
-            self._thread.start()
-            self.connection_status_changed.emit(True, f"Connected to {port} (Simulated)")
-            return True, f"Connected to {port}"
+        if not SERIAL_AVAILABLE:
+            message = "USB serial support is unavailable because pyserial is not installed."
+            self.connection_status_changed.emit(False, message)
+            return False, message
+        if port == "COM_MOCK":
+            message = "Simulated ports are not physical meter connections. Choose Practice instead."
+            self.connection_status_changed.emit(False, message)
+            return False, message
 
         try:
             self.serial_inst = serial.Serial(port=port, baudrate=baud, timeout=timeout)
@@ -86,8 +88,12 @@ class USBSerialMeterSource(MeasurementSource):
             self.is_running = True
             self._thread = threading.Thread(target=self._read_stream_loop, daemon=True)
             self._thread.start()
-            self.connection_status_changed.emit(True, f"Connected to {port} @ {baud} bps")
-            return True, f"Successfully connected to {port}"
+            message = (
+                f"Serial transport open on {port} @ {baud} bps. "
+                "No qualified meter profile is configured; readings cannot be captured."
+            )
+            self.connection_status_changed.emit(True, message)
+            return True, message
         except Exception as e:
             self._is_connected = False
             self.connection_status_changed.emit(False, f"Connection Failed: {e}")
@@ -107,6 +113,7 @@ class USBSerialMeterSource(MeasurementSource):
                 pass
         self.serial_inst = None
         self._is_connected = False
+        self.latest_lux = None
         self.connection_status_changed.emit(False, "Disconnected")
 
     def _read_stream_loop(self) -> None:
@@ -121,17 +128,6 @@ class USBSerialMeterSource(MeasurementSource):
                         self.live_reading_stream.emit(lux)
             except Exception:
                 time.sleep(0.1)
-
-    def _mock_stream_loop(self) -> None:
-        """Simulated stream loop for testing without physical meter."""
-        import random
-        base = 480.0
-        while self.is_running:
-            base += random.uniform(-5.0, 5.0)
-            base = max(10.0, min(2000.0, base))
-            self.latest_lux = round(base, 1)
-            self.live_reading_stream.emit(self.latest_lux)
-            time.sleep(0.5)
 
     @staticmethod
     def _parse_lux_value(raw_text: str) -> Optional[float]:

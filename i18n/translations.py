@@ -60,6 +60,12 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "survey_progress": "Survey Progress:",
         "survey_completed": "completed",
         "survey_possible_outlier": "Possible outlier:",
+        "survey_record_next": "Record & next",
+        "survey_skip_point": "Skip point",
+        "survey_pending": "Pending",
+        "survey_recorded": "Recorded",
+        "survey_select_point": "Select measurement point",
+        "survey_complete": "Survey complete · all points recorded",
 
         # Canvas & Map
         "canvas_x_axis": "X (meters)",
@@ -187,6 +193,12 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "survey_progress": "Progres măsurători:",
         "survey_completed": "finalizat",
         "survey_possible_outlier": "Posibilă valoare aberantă:",
+        "survey_record_next": "Înregistrează și continuă",
+        "survey_skip_point": "Omite punctul",
+        "survey_pending": "În așteptare",
+        "survey_recorded": "Înregistrat",
+        "survey_select_point": "Selectați punctul de măsurare",
+        "survey_complete": "Măsurătoare completă · toate punctele sunt înregistrate",
 
         # Canvas & Map
         "canvas_x_axis": "X (metri)",
@@ -314,6 +326,12 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "survey_progress": "Messfortschritt:",
         "survey_completed": "abgeschlossen",
         "survey_possible_outlier": "Möglicher Ausreißer:",
+        "survey_record_next": "Aufzeichnen & weiter",
+        "survey_skip_point": "Punkt überspringen",
+        "survey_pending": "Ausstehend",
+        "survey_recorded": "Erfasst",
+        "survey_select_point": "Messpunkt auswählen",
+        "survey_complete": "Messung abgeschlossen · alle Punkte erfasst",
 
         # Canvas & Map
         "canvas_x_axis": "X (Meter)",

@@ -132,10 +132,11 @@ def test_usb_serial_meter_driver(qapp):
     assert driver._parse_lux_value("320.0") == 320.0
     assert driver._parse_lux_value("Invalid Text") is None
 
-    # Test mock connection
+    # Never present the old synthetic stream as a connected physical meter.
     ok, msg = driver.connect_port("COM_MOCK")
-    assert ok is True
-    assert driver.is_connected is True
+    assert ok is False
+    assert "Practice" in msg
+    assert driver.is_connected is False
     driver.disconnect_port()
     assert driver.is_connected is False
 
@@ -143,7 +144,11 @@ def test_usb_serial_meter_driver(qapp):
 def test_bluetooth_meter_driver(qapp):
     """Verify Bluetooth driver discovery and connection handling."""
     driver = BluetoothMeterSource()
-    driver.connect_device("00:1A:7D:DA:71:13", "Testo 540i")
-    assert driver.is_connected is True
+    status = []
+    driver.connection_status_changed.connect(lambda connected, desc: status.append((connected, desc)))
+    connected = driver.connect_device("00:1A:7D:DA:71:13", "Testo 540i")
+    assert connected is False
+    assert status[-1][0] is False
+    assert "no verified lux profile" in status[-1][1]
     driver.disconnect_device()
     assert driver.is_connected is False
