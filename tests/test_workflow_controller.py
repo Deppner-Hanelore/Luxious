@@ -1,34 +1,22 @@
-"""Contract checks for the field survey workspace and action policy."""
+"""Contract checks for the field survey workspace state."""
 
-from ui.workflow_controller import Operation, WorkflowController, Workspace, WorkflowSnapshot
+from ui.workflow_controller import WorkflowController, Workspace, WorkflowSnapshot
 
 
-def test_workspace_permissions_and_edit_return_context():
+def test_controller_has_no_edit_workspace():
+    assert [w.value for w in Workspace] == ["survey", "review"]
     workflow = WorkflowController()
-    workflow.select_point("P3")
-
-    assert workflow.allows(Operation.RECORD_READING)
-    assert not workflow.allows(Operation.CHANGE_POINT)
+    assert not hasattr(workflow, "allows")
+    assert not hasattr(workflow, "enter_edit")
     workflow.enter_review()
     assert workflow.workspace == Workspace.REVIEW
-    assert not workflow.allows(Operation.RECORD_READING)
-    assert workflow.allows(Operation.SAVE)
-
-    workflow.enter_edit()
-    assert workflow.workspace == Workspace.EDIT
-    assert workflow.allows(Operation.CORRECT_READING)
-    assert workflow.allows(Operation.IMPORT_READINGS)
-    assert workflow.leave_edit({"P1", "P3"}) == "P3"
-    assert workflow.workspace == Workspace.REVIEW
+    workflow.enter_survey()
+    assert workflow.workspace == Workspace.SURVEY
 
 
-def test_edit_return_clears_deleted_selection_and_reconciles_stale_points():
+def test_reconcile_clears_deleted_selection():
     workflow = WorkflowController()
     workflow.select_point("P2")
-    workflow.enter_edit()
-
-    assert workflow.leave_edit({"P1", "P3"}) is None
-    assert workflow.workspace == Workspace.SURVEY
     assert workflow.reconcile_points({"P1", "P3"}) is None
 
 

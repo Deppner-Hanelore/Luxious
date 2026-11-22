@@ -1,8 +1,8 @@
 """Central workflow state and mutation policy for a room survey.
 
-This module contains no widgets and performs no project mutations. UI handlers
-ask the controller before invoking a command, so mouse, table, and shortcut
-paths can share the same rules.
+This module contains no widgets and performs no project mutations. Every
+survey change (readings, points, grid, undo/redo) is available in both the
+Survey and Review workspaces.
 """
 
 from __future__ import annotations
@@ -16,7 +16,6 @@ from typing import Optional
 class Workspace(str, Enum):
     SURVEY = "survey"
     REVIEW = "review"
-    EDIT = "edit"
 
 
 class Operation(str, Enum):
@@ -38,27 +37,14 @@ class WorkflowSnapshot:
 
     workspace: Workspace
     selected_point_id: Optional[str]
-    edit_return_workspace: Optional[Workspace] = None
-    edit_return_point_id: Optional[str] = None
 
 
 class WorkflowController:
-    """Own workspace transitions, edit return state, and action permissions."""
-
-    _EDIT_ONLY = frozenset(
-        {
-            Operation.CORRECT_READING,
-            Operation.CHANGE_POINT,
-            Operation.CHANGE_ROOM_OR_GRID,
-            Operation.IMPORT_READINGS,
-        }
-    )
+    """Own workspace transitions, point selection, and capture de-duplication."""
 
     def __init__(self) -> None:
         self.workspace = Workspace.SURVEY
         self.selected_point_id: Optional[str] = None
-        self._edit_return_workspace: Optional[Workspace] = None
-        self._edit_return_point_id: Optional[str] = None
         self._seen_operations: set[str] = set()
         self._operation_order: deque[str] = deque()
 
@@ -73,52 +59,15 @@ class WorkflowController:
             self._seen_operations.discard(expired)
         return True
 
-    def allows(self, operation: Operation) -> bool:
-        """Return whether an operation may run in the current workspace."""
-        if operation in (
-            Operation.SAVE,
-            Operation.EXPORT,
-            Operation.NAVIGATE,
-            Operation.CHANGE_TARGET,
-            Operation.CHANGE_DISPLAY,
-        ):
-            return True
-        if operation == Operation.RECORD_READING:
-            return self.workspace in (Workspace.SURVEY, Workspace.EDIT)
-        if operation in self._EDIT_ONLY:
-            return self.workspace == Workspace.EDIT
-        return False
-
     def select_point(self, point_id: Optional[str]) -> None:
         """Track the point selected by either map or accessible list/table."""
         self.selected_point_id = point_id
 
     def enter_review(self) -> None:
-        if self.workspace != Workspace.EDIT:
-            self.workspace = Workspace.REVIEW
+        self.workspace = Workspace.REVIEW
 
     def enter_survey(self) -> None:
-        if self.workspace != Workspace.EDIT:
-            self.workspace = Workspace.SURVEY
-
-    def enter_edit(self) -> None:
-        if self.workspace == Workspace.EDIT:
-            return
-        self._edit_return_workspace = self.workspace
-        self._edit_return_point_id = self.selected_point_id
-        self.workspace = Workspace.EDIT
-
-    def leave_edit(self, valid_point_ids: set[str]) -> Optional[str]:
-        """Restore prior workspace and selected point, falling back if deleted."""
-        if self.workspace != Workspace.EDIT:
-            return self.selected_point_id
-
-        self.workspace = self._edit_return_workspace or Workspace.SURVEY
-        preferred = self._edit_return_point_id
-        self.selected_point_id = preferred if preferred in valid_point_ids else None
-        self._edit_return_workspace = None
-        self._edit_return_point_id = None
-        return self.selected_point_id
+        self.workspace = Workspace.SURVEY
 
     def reconcile_points(self, valid_point_ids: set[str]) -> Optional[str]:
         """Clear a stale selection after point deletion or project replacement."""
@@ -146,8 +95,6 @@ class WorkflowController:
         return WorkflowSnapshot(
             workspace=self.workspace,
             selected_point_id=self.selected_point_id,
-            edit_return_workspace=self._edit_return_workspace,
-            edit_return_point_id=self._edit_return_point_id,
         )
 
     def restore(self, snapshot: WorkflowSnapshot, valid_point_ids: set[str]) -> None:
@@ -156,11 +103,5 @@ class WorkflowController:
         self.selected_point_id = (
             snapshot.selected_point_id
             if snapshot.selected_point_id in valid_point_ids
-            else None
-        )
-        self._edit_return_workspace = snapshot.edit_return_workspace
-        self._edit_return_point_id = (
-            snapshot.edit_return_point_id
-            if snapshot.edit_return_point_id in valid_point_ids
             else None
         )

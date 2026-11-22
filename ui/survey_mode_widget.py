@@ -3,7 +3,7 @@
 Optimized for real-world room walking workflow:
 - Current point target tracking with coordinates
 - High-efficiency Enter-to-advance entry (sequential walking traversal)
-- Previous / Next navigation controls
+- Next unmeasured navigation control
 - Survey progress indicator (e.g. 18 / 30 points completed)
 - Non-destructive outlier warning alerts
 - No emojis, clean readable typography
@@ -65,22 +65,23 @@ class SurveyModeWidget(QFrame):
         self.lbl_point_id = QLabel(f"{tr('survey_point')} --", self)
         self.lbl_point_id.setStyleSheet("font-size: 13px; font-weight: bold; color: #1e3a8a;")
 
-        self.lbl_coords = QLabel("(X: -- m, Y: -- m)", self)
+        self.lbl_coords = QLabel(tr("survey_coords", x="--", y="--"), self)
         self.lbl_coords.setStyleSheet("font-size: 11px; color: #64748b;")
 
         # 2. Lux Entry SpinBox
         self.edit_lux = QLineEdit(self)
         self.edit_lux.setObjectName("manualLuxEntry")
-        self.edit_lux.setPlaceholderText("Enter lux")
-        self.edit_lux.setAccessibleName("Manual illuminance reading in lux")
+        self.edit_lux.setPlaceholderText(tr("survey_enter_lux"))
+        self.edit_lux.setAccessibleName(tr("survey_lux_accessible"))
         self.edit_lux.setValidator(QDoubleValidator(0.0, 150000.0, -1, self))
         self._set_input_locale()
         self.edit_lux.setMinimumSize(112, 48)
+        self.edit_lux.setMaximumWidth(150)  # room for a reading such as 150000, no wider
         self.edit_lux.setStyleSheet("font-size: 13px; font-weight: bold; padding: 3px 6px;")
         self.lbl_lux_unit = QLabel("lx", self)
 
         # 3. Action Buttons (No emojis, crisp readable text)
-        self.btn_save_next = QPushButton(f"{tr('survey_record_next')} (Enter)", self)
+        self.btn_save_next = QPushButton(f"{tr('survey_record_next').replace('&', '&&')} (Enter)", self)
         self.btn_save_next.setMinimumHeight(48)
         self.btn_save_next.setStyleSheet("""
             QPushButton {
@@ -98,20 +99,13 @@ class SurveyModeWidget(QFrame):
                 border-color: #cbd5e1;
             }
         """)
-        self.btn_prev = QPushButton(tr("survey_prev"), self)
-        self.btn_next = QPushButton(tr("survey_next"), self)
         self.btn_next_unmeasured = QPushButton(tr("survey_next_unmeasured"), self)
-        self.btn_prev.setMinimumHeight(44)
-        self.btn_next.setText(tr("survey_skip_point"))
-        self.btn_next.setMinimumHeight(44)
         self.btn_next_unmeasured.setMinimumHeight(44)
         self.combo_points = QComboBox(self)
         self.combo_points.setAccessibleName(tr("survey_select_point"))
         self.combo_points.setMinimumHeight(44)
 
         self.btn_save_next.clicked.connect(self._save_and_advance)
-        self.btn_prev.clicked.connect(self._go_previous)
-        self.btn_next.clicked.connect(self._go_next)
         self.btn_next_unmeasured.clicked.connect(self._go_next_unmeasured)
         self.combo_points.currentIndexChanged.connect(self._on_point_combo_changed)
 
@@ -169,31 +163,23 @@ class SurveyModeWidget(QFrame):
         control_row.setContentsMargins(0, 0, 0, 0)
         control_row.setSpacing(8)
         self.lbl_reading_tag = QLabel(tr("survey_reading"), self)
-        self.lbl_source_mode = QLabel("Manual entry", self)
+        self.lbl_source_mode = QLabel(tr("survey_manual_entry"), self)
         self.lbl_source_mode.setObjectName("manualSourceLabel")
-        self.lbl_source_mode.setAccessibleName("Selected reading source: manual entry")
-        self.lbl_source_mode.setToolTip("Enter a lux value from the instrument display. No connection is required.")
+        self.lbl_source_mode.setAccessibleName(tr("survey_source_accessible"))
+        self.lbl_source_mode.setToolTip(tr("survey_source_tip"))
         control_row.addWidget(self.lbl_reading_tag)
         control_row.addWidget(self.lbl_source_mode)
         control_row.addWidget(self.edit_lux)
         control_row.addWidget(self.lbl_lux_unit)
         control_row.addWidget(self.btn_save_next)
+        control_row.addWidget(self.btn_next_unmeasured)
         control_row.addStretch()
-
-        navigation_row = QHBoxLayout()
-        navigation_row.setContentsMargins(0, 0, 0, 0)
-        navigation_row.setSpacing(8)
-        navigation_row.addWidget(self.btn_prev)
-        navigation_row.addWidget(self.btn_next)
-        navigation_row.addWidget(self.btn_next_unmeasured)
-        navigation_row.addStretch()
 
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(2, 2, 2, 2)
         main_layout.setSpacing(3)
         main_layout.addLayout(top_row)
         main_layout.addLayout(control_row)
-        main_layout.addLayout(navigation_row)
         main_layout.addWidget(self.lbl_outlier_warning)
 
         TranslationManager.get_instance().language_changed.connect(self.retranslate_ui)
@@ -201,11 +187,14 @@ class SurveyModeWidget(QFrame):
     def retranslate_ui(self) -> None:
         """Update strings on language change."""
         self.lbl_reading_tag.setText(tr("survey_reading"))
-        self.btn_save_next.setText(f"{tr('survey_record_next')} (Enter)")
-        self.btn_prev.setText(tr("survey_prev"))
-        self.btn_next.setText(tr("survey_skip_point"))
+        self.btn_save_next.setText(f"{tr('survey_record_next').replace('&', '&&')} (Enter)")
         self.btn_next_unmeasured.setText(tr("survey_next_unmeasured"))
-        self.btn_save_next.setText(f"{tr('survey_record_next')} (Enter)")
+        self.edit_lux.setPlaceholderText(tr("survey_enter_lux"))
+        self.edit_lux.setAccessibleName(tr("survey_lux_accessible"))
+        self.lbl_source_mode.setText(tr("survey_manual_entry"))
+        self.lbl_source_mode.setAccessibleName(tr("survey_source_accessible"))
+        self.lbl_source_mode.setToolTip(tr("survey_source_tip"))
+        self.lbl_outlier_warning.setVisible(False)
         self.combo_points.setAccessibleName(tr("survey_select_point"))
         draft, valid_draft = self.edit_lux.locale().toDouble(self.edit_lux.text())
         point = self.project.find_point_by_id(self.active_point_id) if self.project and self.active_point_id else None
@@ -244,7 +233,7 @@ class SurveyModeWidget(QFrame):
         self.active_point_id = point_id
         if not self.project or not point_id:
             self.lbl_point_id.setText(f"{tr('survey_point')} --")
-            self.lbl_coords.setText("(X: -- m, Y: -- m)")
+            self.lbl_coords.setText(tr("survey_coords", x="--", y="--"))
             self.lbl_outlier_warning.setVisible(False)
             self.edit_lux.clear()
             self.btn_save_next.setEnabled(False)
@@ -255,7 +244,7 @@ class SurveyModeWidget(QFrame):
         if pt:
             status_str = f"[{tr('survey_recorded')}]" if pt.is_measured else f"[{tr('survey_pending')}]"
             self.lbl_point_id.setText(f"{tr('survey_point')} {pt.id} {status_str}")
-            self.lbl_coords.setText(f"(X: {pt.x:.2f} m, Y: {pt.y:.2f} m)")
+            self.lbl_coords.setText(tr("survey_coords", x=f"{pt.x:.2f}", y=f"{pt.y:.2f}"))
 
             self.edit_lux.blockSignals(True)
             if pt.is_measured and pt.lux is not None:
@@ -271,7 +260,7 @@ class SurveyModeWidget(QFrame):
             self.btn_save_next.setEnabled(
                 self.recording_allowed and (not pt.is_measured or self.correction_allowed)
             )
-            self.btn_save_next.setToolTip("Use Edit survey to correct a recorded reading." if pt.is_measured else "Record this value for the selected point.")
+            self.btn_save_next.setToolTip(tr("survey_tip_replace") if pt.is_measured else tr("survey_tip_record"))
 
             # Show outlier badge if flagged
             if pt.is_possible_outlier and pt.outlier_reason:
@@ -308,32 +297,16 @@ class SurveyModeWidget(QFrame):
 
         raw_value = self.edit_lux.text().strip()
         if not raw_value:
-            self.lbl_outlier_warning.setText("Enter a reading first. A blank field remains pending.")
+            self.lbl_outlier_warning.setText(tr("survey_blank_warning"))
             self.lbl_outlier_warning.setVisible(True)
             return
         lux_val, ok = self.edit_lux.locale().toDouble(raw_value)
         if not ok or not math.isfinite(lux_val) or lux_val < 0 or lux_val > 150000:
-            self.lbl_outlier_warning.setText("Enter a valid lux value from 0 to 150000.")
+            self.lbl_outlier_warning.setText(tr("survey_invalid_warning"))
             self.lbl_outlier_warning.setVisible(True)
             return
         self.measurement_saved.emit(pt.id, lux_val)
         self.update_progress()
-
-    def _go_previous(self) -> None:
-        """Navigate to previous point in project point sequence."""
-        if not self.project or not self.project.points:
-            return
-        cur_idx = self._get_current_index()
-        if cur_idx <= 0:
-            return
-        prev_idx = cur_idx - 1
-        target_id = self.project.points[prev_idx].id
-        self.set_active_point(target_id)
-        self.point_navigated.emit(target_id)
-
-    def _go_next(self) -> None:
-        """Leave this point pending and navigate to the next pending point."""
-        self._go_next_unmeasured()
 
     def _go_next_unmeasured(self) -> None:
         """Find and navigate to the next unmeasured point following current sequence."""
@@ -380,8 +353,6 @@ class SurveyModeWidget(QFrame):
     def _update_navigation_controls(self) -> None:
         points = self.project.points if self.project else []
         has_other_pending = any(not p.is_measured and p.id != self.active_point_id for p in points)
-        self.btn_prev.setEnabled(bool(points) and self._get_current_index() > 0)
-        self.btn_next.setEnabled(has_other_pending)
         self.btn_next_unmeasured.setEnabled(has_other_pending)
         self.combo_points.setEnabled(bool(points))
         self.set_workflow_permissions(self.recording_allowed, self.correction_allowed)

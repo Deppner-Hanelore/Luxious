@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 
 from models.project import LuminationProject
 from analysis.comparison import TargetComparisonResult, compare_with_target
+from i18n.translations import tr, TranslationManager
 
 
 class TargetPanel(QWidget):
@@ -38,13 +39,15 @@ class TargetPanel(QWidget):
         self.project: Optional[LuminationProject] = None
 
         # UI Elements
-        group = QGroupBox("Comparison with Selected Target Illuminance", self)
+        group = QGroupBox(tr("target_group"), self)
+        self.group = group
         g_layout = QVBoxLayout(group)
         g_layout.setSpacing(8)
 
         # Target input row
         input_row = QHBoxLayout()
-        lbl_target = QLabel("Target (lx):", self)
+        lbl_target = QLabel(tr("target_label"), self)
+        self.lbl_target = lbl_target
         lbl_target.setStyleSheet("font-weight: 600;")
         self.spin_target = QDoubleSpinBox(self)
         self.spin_target.setRange(0, 50000)
@@ -62,12 +65,14 @@ class TargetPanel(QWidget):
         for val in [100, 200, 300, 500, 750, 1000]:
             btn = QPushButton(f"{val}", self)
             btn.setMaximumWidth(45)
+            btn.setMinimumWidth(30)
             btn.setStyleSheet("padding: 2px 4px; font-size: 11px;")
             btn.clicked.connect(lambda checked=False, v=val: self.spin_target.setValue(v))
             preset_row.addWidget(btn)
 
         # Compliance Progress Bar
-        self.lbl_progress = QLabel("Points Meeting Target: 0 / 0 (0%)", self)
+        self.lbl_progress = QLabel(tr("target_progress_none"), self)
+        self.lbl_progress.setWordWrap(True)
         self.lbl_progress.setStyleSheet("font-size: 11px; font-weight: 600; color: #1e3a8a;")
 
         self.progress_bar = QProgressBar(self)
@@ -103,15 +108,22 @@ class TargetPanel(QWidget):
         m_grid = QGridLayout(self.metrics_frame)
         m_grid.setSpacing(4)
 
-        self.lbl_m_target = QLabel("Target: <b>- lx</b>", self)
-        self.lbl_m_avg = QLabel("Avg Measured: <b>- lx</b>", self)
-        self.lbl_m_below = QLabel("Below Target: <b>-</b>", self)
-        self.lbl_m_above = QLabel("≥ Target: <b>-</b>", self)
-        self.lbl_m_max_deficit = QLabel("Max Deficit: <b>-</b>", self)
-        self.lbl_m_max_surplus = QLabel("Max Surplus: <b>-</b>", self)
-        self.lbl_m_mae = QLabel("Mean Abs Deviation: <b>-</b>", self)
-        self.lbl_m_avg_dev = QLabel("Mean Deviation: <b>-</b>", self)
+        self.lbl_m_target = QLabel(tr("target_m_target", value="- lx"), self)
+        self.lbl_m_avg = QLabel(tr("target_m_avg", value="- lx"), self)
+        self.lbl_m_below = QLabel(tr("target_m_below", value="-"), self)
+        self.lbl_m_above = QLabel(tr("target_m_above", value="-"), self)
+        self.lbl_m_max_deficit = QLabel(tr("target_m_deficit", value="-"), self)
+        self.lbl_m_max_surplus = QLabel(tr("target_m_surplus", value="-"), self)
+        self.lbl_m_mae = QLabel(tr("target_m_mae", value="-"), self)
+        self.lbl_m_avg_dev = QLabel(tr("target_m_dev", value="-"), self)
 
+        # Wrap long values (German, Romanian) instead of cutting them off at the panel edge.
+        for label in (self.lbl_m_target, self.lbl_m_avg, self.lbl_m_below, self.lbl_m_above,
+                      self.lbl_m_max_deficit, self.lbl_m_max_surplus, self.lbl_m_mae, self.lbl_m_avg_dev):
+            label.setWordWrap(True)
+            label.setMinimumWidth(0)
+        m_grid.setColumnStretch(0, 1)
+        m_grid.setColumnStretch(1, 1)
         m_grid.addWidget(self.lbl_m_target, 0, 0)
         m_grid.addWidget(self.lbl_m_avg, 0, 1)
         m_grid.addWidget(self.lbl_m_below, 1, 0)
@@ -122,7 +134,7 @@ class TargetPanel(QWidget):
         m_grid.addWidget(self.lbl_m_avg_dev, 3, 1)
 
         # Summary Note
-        self.lbl_summary = QLabel("Enter measured points to compare against target.", self)
+        self.lbl_summary = QLabel(tr("target_summary_empty"), self)
         self.lbl_summary.setWordWrap(True)
         self.lbl_summary.setStyleSheet("background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 4px; padding: 6px; font-size: 11px; color: #334155;")
 
@@ -138,6 +150,13 @@ class TargetPanel(QWidget):
         main_layout.setContentsMargins(8, 8, 8, 8)
         main_layout.addWidget(group)
         main_layout.addStretch()
+        TranslationManager.get_instance().language_changed.connect(self.retranslate_ui)
+
+    def retranslate_ui(self, *_args) -> None:
+        self.group.setTitle(tr("target_group"))
+        self.lbl_target.setText(tr("target_label"))
+        if self.project:
+            self.update_analysis()
 
     def set_project(self, project: LuminationProject) -> None:
         """Set project reference and update target input."""
@@ -158,32 +177,37 @@ class TargetPanel(QWidget):
 
         if comp is None:
             self.progress_bar.setValue(0)
-            self.lbl_progress.setText("Points Meeting Target: 0 / 0 (0%)")
-            self.lbl_m_target.setText(f"Target: <b>{target_val:.0f} lx</b>")
-            self.lbl_m_avg.setText("Avg Measured: <b>-</b>")
-            self.lbl_m_below.setText("Below Target: <b>-</b>")
-            self.lbl_m_above.setText("≥ Target: <b>-</b>")
-            self.lbl_m_max_deficit.setText("Max Deficit: <b>-</b>")
-            self.lbl_m_max_surplus.setText("Max Surplus: <b>-</b>")
-            self.lbl_m_mae.setText("Mean Abs Dev: <b>-</b>")
-            self.lbl_m_avg_dev.setText("Mean Dev: <b>-</b>")
-            self.lbl_summary.setText(f"Target entered by user: {target_val:.0f} lx.\nNo measured points recorded yet.")
+            self.lbl_progress.setText(tr("target_progress_none"))
+            self.lbl_m_target.setText(tr("target_m_target", value=f"{target_val:.0f} lx"))
+            self.lbl_m_avg.setText(tr("target_m_avg", value="-"))
+            self.lbl_m_below.setText(tr("target_m_below", value="-"))
+            self.lbl_m_above.setText(tr("target_m_above", value="-"))
+            self.lbl_m_max_deficit.setText(tr("target_m_deficit", value="-"))
+            self.lbl_m_max_surplus.setText(tr("target_m_surplus", value="-"))
+            self.lbl_m_mae.setText(tr("target_m_mae", value="-"))
+            self.lbl_m_avg_dev.setText(tr("target_m_dev", value="-"))
+            self.lbl_summary.setText(tr("target_summary_no_points", target=f"{target_val:.0f}"))
             return
 
         pct_above = int(round(comp.percentage_above_or_equal))
         self.progress_bar.setValue(pct_above)
-        self.lbl_progress.setText(f"Points ≥ Target: <b>{comp.points_above_or_equal_target} / {comp.points_evaluated}</b> ({comp.percentage_above_or_equal:.1f}%)")
+        self.lbl_progress.setText(tr(
+            "target_progress",
+            above=comp.points_above_or_equal_target,
+            total=comp.points_evaluated,
+            pct=f"{comp.percentage_above_or_equal:.1f}",
+        ))
 
-        self.lbl_m_target.setText(f"Target: <b>{comp.target_lux:.0f} lx</b>")
-        self.lbl_m_avg.setText(f"Avg Measured: <b>{comp.e_avg:.1f} lx</b>")
-        self.lbl_m_below.setText(f"Below Target: <b>{comp.points_below_target}</b> ({comp.percentage_below_target:.1f}%)")
-        self.lbl_m_above.setText(f"≥ Target: <b>{comp.points_above_or_equal_target}</b> ({comp.percentage_above_or_equal:.1f}%)")
+        self.lbl_m_target.setText(tr("target_m_target", value=f"{comp.target_lux:.0f} lx"))
+        self.lbl_m_avg.setText(tr("target_m_avg", value=f"{comp.e_avg:.1f} lx"))
+        self.lbl_m_below.setText(tr("target_m_below", value=comp.points_below_target) + f" ({comp.percentage_below_target:.1f}%)")
+        self.lbl_m_above.setText(tr("target_m_above", value=comp.points_above_or_equal_target) + f" ({comp.percentage_above_or_equal:.1f}%)")
 
-        deficit_sub = f" (at {comp.max_deficit_point_id})" if comp.max_deficit_point_id else ""
-        self.lbl_m_max_deficit.setText(f"Max Deficit: <b>-{comp.max_negative_deficit:.1f} lx</b>{deficit_sub}")
-        self.lbl_m_max_surplus.setText(f"Max Surplus: <b>+{comp.max_positive_deviation:.1f} lx</b>")
-        self.lbl_m_mae.setText(f"Mean Abs Dev: <b>{comp.avg_absolute_deviation:.1f} lx</b>")
-        self.lbl_m_avg_dev.setText(f"Mean Dev: <b>{comp.avg_deviation:+.1f} lx</b>")
+        deficit_sub = tr("target_at_point", point=comp.max_deficit_point_id) if comp.max_deficit_point_id else ""
+        self.lbl_m_max_deficit.setText(tr("target_m_deficit", value=f"-{comp.max_negative_deficit:.1f} lx") + deficit_sub)
+        self.lbl_m_max_surplus.setText(tr("target_m_surplus", value=f"+{comp.max_positive_deviation:.1f} lx"))
+        self.lbl_m_mae.setText(tr("target_m_mae", value=f"{comp.avg_absolute_deviation:.1f} lx"))
+        self.lbl_m_avg_dev.setText(tr("target_m_dev", value=f"{comp.avg_deviation:+.1f} lx"))
 
         self.lbl_summary.setText(comp.summary_text)
 

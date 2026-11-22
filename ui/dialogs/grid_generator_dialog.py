@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 )
 
 from models.project import LuminationProject
+from i18n.translations import tr
 
 
 class GridGeneratorDialog(QDialog):
@@ -32,20 +33,20 @@ class GridGeneratorDialog(QDialog):
     def __init__(self, project: LuminationProject, parent: Optional[QDialog] = None) -> None:
         super().__init__(parent)
         self.project = project
-        self.setWindowTitle("Regenerate Measurement Grid")
+        self.setWindowTitle(tr("grid_title"))
         self.setMinimumWidth(440)
 
         # Mode Selection
-        mode_group = QGroupBox("Grid Definition Mode", self)
+        mode_group = QGroupBox(tr("grid_mode_group"), self)
         m_layout = QVBoxLayout(mode_group)
-        self.rb_count = QRadioButton("By Number of Columns and Rows", self)
-        self.rb_spacing = QRadioButton("By Desired Point Spacing (Meters)", self)
+        self.rb_count = QRadioButton(tr("grid_by_count"), self)
+        self.rb_spacing = QRadioButton(tr("grid_by_spacing"), self)
         self.rb_count.setChecked(True)
         m_layout.addWidget(self.rb_count)
         m_layout.addWidget(self.rb_spacing)
 
         # Count parameters
-        self.count_group = QGroupBox("Grid Counts", self)
+        self.count_group = QGroupBox(tr("grid_counts"), self)
         cg_layout = QGridLayout(self.count_group)
         self.spin_cols = QSpinBox(self)
         self.spin_cols.setRange(1, 50)
@@ -53,13 +54,13 @@ class GridGeneratorDialog(QDialog):
         self.spin_rows = QSpinBox(self)
         self.spin_rows.setRange(1, 50)
         self.spin_rows.setValue(project.room.grid_rows)
-        cg_layout.addWidget(QLabel("Columns along X:"), 0, 0)
+        cg_layout.addWidget(QLabel(tr("grid_cols")), 0, 0)
         cg_layout.addWidget(self.spin_cols, 0, 1)
-        cg_layout.addWidget(QLabel("Rows along Y:"), 1, 0)
+        cg_layout.addWidget(QLabel(tr("grid_rows")), 1, 0)
         cg_layout.addWidget(self.spin_rows, 1, 1)
 
         # Spacing parameters
-        self.spacing_group = QGroupBox("Target Spacing (Meters)", self)
+        self.spacing_group = QGroupBox(tr("grid_spacing_group"), self)
         sg_layout = QGridLayout(self.spacing_group)
         self.spin_sx = QDoubleSpinBox(self)
         self.spin_sx.setRange(0.1, 20.0)
@@ -73,9 +74,9 @@ class GridGeneratorDialog(QDialog):
         self.spin_sy.setSingleStep(0.2)
         self.spin_sy.setSuffix(" m")
 
-        sg_layout.addWidget(QLabel("Spacing X:"), 0, 0)
+        sg_layout.addWidget(QLabel(tr("grid_spacing_x")), 0, 0)
         sg_layout.addWidget(self.spin_sx, 0, 1)
-        sg_layout.addWidget(QLabel("Spacing Y:"), 1, 0)
+        sg_layout.addWidget(QLabel(tr("grid_spacing_y")), 1, 0)
         sg_layout.addWidget(self.spin_sy, 1, 1)
         self.spacing_group.setEnabled(False)
 
@@ -84,20 +85,20 @@ class GridGeneratorDialog(QDialog):
         self.rb_spacing.toggled.connect(lambda chk: self.spacing_group.setEnabled(chk))
 
         # Margin, Traversal & Preservation Options
-        opt_group = QGroupBox("Survey Traversal & Options", self)
+        opt_group = QGroupBox(tr("grid_options").replace("&", "&&"), self)
         o_layout = QGridLayout(opt_group)
 
-        o_layout.addWidget(QLabel("Walking Traversal Order:"), 0, 0)
+        o_layout.addWidget(QLabel(tr("grid_traversal")), 0, 0)
         self.combo_traversal = QComboBox(self)
-        self.combo_traversal.addItem("Serpentine / Snake Pattern (L→R, R→L)", "serpentine")
-        self.combo_traversal.addItem("Standard Row-by-Row (Left to Right)", "left_to_right")
+        self.combo_traversal.addItem(tr("grid_traversal_serpentine"), "serpentine")
+        self.combo_traversal.addItem(tr("grid_traversal_rows"), "left_to_right")
         if project.room.traversal_order == "left_to_right":
             self.combo_traversal.setCurrentIndex(1)
         else:
             self.combo_traversal.setCurrentIndex(0)
         o_layout.addWidget(self.combo_traversal, 0, 1)
 
-        o_layout.addWidget(QLabel("Wall Margin Band:"), 1, 0)
+        o_layout.addWidget(QLabel(tr("grid_margin")), 1, 0)
         self.spin_margin = QDoubleSpinBox(self)
         self.spin_margin.setRange(0.0, 10.0)
         self.spin_margin.setValue(project.room.wall_margin)
@@ -105,7 +106,7 @@ class GridGeneratorDialog(QDialog):
         self.spin_margin.setSuffix(" m")
         o_layout.addWidget(self.spin_margin, 1, 1)
 
-        self.chk_preserve = QCheckBox("Preserve existing readings where coordinates match", self)
+        self.chk_preserve = QCheckBox(tr("grid_preserve"), self)
         self.chk_preserve.setChecked(True)
         o_layout.addWidget(self.chk_preserve, 2, 0, 1, 2)
 
@@ -115,6 +116,8 @@ class GridGeneratorDialog(QDialog):
             Qt.Orientation.Horizontal,
             self,
         )
+        btn_box.button(QDialogButtonBox.StandardButton.Ok).setText(tr("btn_ok"))
+        btn_box.button(QDialogButtonBox.StandardButton.Cancel).setText(tr("btn_cancel"))
         btn_box.accepted.connect(self._on_accept)
         btn_box.rejected.connect(self.reject)
 

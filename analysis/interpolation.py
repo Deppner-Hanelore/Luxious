@@ -14,6 +14,7 @@ and distinct fallback reporting.
 from __future__ import annotations
 from dataclasses import dataclass
 from typing import List, Optional, Tuple, Sequence
+from i18n.translations import tr
 import numpy as np
 
 from models.measurement import MeasurementPoint
@@ -137,10 +138,10 @@ def reconstruct_illuminance_field(
             method_requested=method,
             method_used="none",
             is_fallback=False,
-            fallback_reason="No measured points available.",
+            fallback_reason=tr("interp_no_points"),
             num_points_used=0,
             success=False,
-            error_message="No measured illuminance readings entered.",
+            error_message=tr("interp_no_readings"),
         )
 
     # 3. Handle single point case
@@ -155,7 +156,7 @@ def reconstruct_illuminance_field(
             method_requested=method,
             method_used="single_point",
             is_fallback=True,
-            fallback_reason="Only 1 measurement point is recorded; minimum 3 non-collinear points required for 2D field.",
+            fallback_reason=tr("interp_one_point"),
             num_points_used=1,
             success=True,
         )
@@ -169,7 +170,7 @@ def reconstruct_illuminance_field(
             method_requested=method,
             method_used="sparse_2pt",
             is_fallback=True,
-            fallback_reason="Only 2 measurement points recorded; at least 3 non-collinear points needed for 2D contour reconstruction.",
+            fallback_reason=tr("interp_two_points"),
             num_points_used=2,
             success=True,
         )
@@ -186,10 +187,10 @@ def reconstruct_illuminance_field(
             method_requested=method,
             method_used="none",
             is_fallback=True,
-            fallback_reason="A 2D illuminance field cannot be reconstructed from the current measurement geometry. Add measurements at non-collinear positions.",
+            fallback_reason=tr("interp_collinear"),
             num_points_used=n_pts,
             success=False,
-            error_message="A 2D illuminance field cannot be reconstructed from the current measurement geometry. Add measurements at non-collinear positions.",
+            error_message=tr("interp_collinear"),
         )
 
     # 6. Convex hull computation to prevent unphysical extrapolation
@@ -213,7 +214,7 @@ def reconstruct_illuminance_field(
         if n_pts < 4:
             used_method = "linear"
             is_fallback = True
-            fallback_reason = "Cubic interpolation requires at least 4 points; fell back to Linear."
+            fallback_reason = tr("interp_cubic_few")
         else:
             try:
                 grid_z = griddata(xy, lux, (grid_x, grid_y), method="cubic")
@@ -225,7 +226,7 @@ def reconstruct_illuminance_field(
             except Exception as e:
                 used_method = "linear"
                 is_fallback = True
-                fallback_reason = f"Cubic interpolation failed ({e}); fell back to Linear."
+                fallback_reason = tr("interp_cubic_failed", error=e)
 
     if used_method == "rbf":
         try:
@@ -243,7 +244,7 @@ def reconstruct_illuminance_field(
         except Exception as e:
             used_method = "linear"
             is_fallback = True
-            fallback_reason = f"RBF interpolation failed ({e}); fell back to Linear."
+            fallback_reason = tr("interp_rbf_failed", error=e)
 
     if used_method == "linear":
         try:
@@ -253,7 +254,7 @@ def reconstruct_illuminance_field(
         except Exception as e:
             used_method = "nearest"
             is_fallback = True
-            fallback_reason = f"Linear interpolation failed ({e}); fell back to Nearest."
+            fallback_reason = tr("interp_linear_failed", error=e)
 
     if used_method == "nearest":
         try:
@@ -271,8 +272,21 @@ def reconstruct_illuminance_field(
                 fallback_reason=str(e),
                 num_points_used=n_pts,
                 success=False,
-                error_message=f"Interpolation computation failed: {e}",
+                error_message=tr("interp_failed", error=e),
             )
+
+    if extrapolate_to_walls:
+        # Between the outer points and the walls there are no readings: each such cell takes the
+        # value at the nearest edge of the measured area, so the map continues smoothly to the
+        # walls. These cells are estimates; results and the colour scale never use them.
+        missing = np.isnan(grid_z)
+        if missing.any() and not missing.all():
+            from scipy.ndimage import distance_transform_edt
+
+            nearest_index = distance_transform_edt(missing, return_distances=False, return_indices=True)
+            grid_z = grid_z[tuple(nearest_index)]
+            if not allow_negative:
+                grid_z = np.clip(grid_z, 0.0, None)
 
     return InterpolationResult(
         grid_x=grid_x,

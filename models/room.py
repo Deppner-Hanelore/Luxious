@@ -95,7 +95,7 @@ class Room:
         spacing_x: Optional[float] = None,
         spacing_y: Optional[float] = None,
         wall_margin: Optional[float] = None,
-        centered_in_cells: bool = True,
+        centered_in_cells: bool = False,
         traversal_order: Optional[str] = None,
     ) -> List[MeasurementPoint]:
         """Generate a regular grid of measurement points with top-to-bottom snake/serpentine walking traversal.
@@ -117,8 +117,10 @@ class Room:
             sx = max(0.05, float(sx))
             sy = max(0.05, float(sy))
 
-            n_cols = max(1, min(100, int(round(eff_len / sx))))
-            n_rows = max(1, min(100, int(round(eff_wid / sy))))
+            # Points on the wall-distance line: N spacings need N + 1 points.
+            extra = 0 if centered_in_cells else 1
+            n_cols = max(1, min(100, int(round(eff_len / sx)) + extra))
+            n_rows = max(1, min(100, int(round(eff_wid / sy)) + extra))
         else:
             n_rows = max(1, min(100, int(rows or self.grid_rows)))
             n_cols = max(1, min(100, int(cols or self.grid_cols)))

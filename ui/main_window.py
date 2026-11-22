@@ -4,10 +4,9 @@ Luxious desktop survey interface:
 - Edge-to-edge 2D room canvas covering 100% of central workspace
 - Two clean collapsible side panels (Left: Layers & Target, Right: KPIs, DIALux, Table)
 - Small sleek floating toggle buttons with chevron icons on the left and right edges
-- USB/Bluetooth discovery with capture disabled until a meter profile is qualified
 - Zero emojis anywhere — clean, crisp typography and vector icons
 - Multi-language runtime translation (English, Romanian, German)
-- Menu hierarchy: File, CSV & Export, Devices, Language, Help
+- Menu hierarchy: File, Survey, Language, Help
 - Undo / Redo routed through the survey workflow policy
 """
 
@@ -44,11 +43,6 @@ from PySide6.QtWidgets import (
 from models.project import LuminationProject
 from models.room import Room
 from models.measurement import MeasurementPoint
-from measurement_sources.base import MeasurementSource
-from measurement_sources.manual import ManualMeasurementSource
-from measurement_sources.usb_serial import USBSerialMeterSource
-from measurement_sources.bluetooth_meter import BluetoothMeterSource
-from measurement_sources.device_session import MeasurementSample
 
 from ui.room_canvas import RoomCanvasWidget
 from ui.start_screen import StartScreenWidget
@@ -59,13 +53,10 @@ from ui.target_panel import TargetPanel
 from ui.comparison_panel import ComparisonPanel
 from ui.layer_control_widget import LayerControlWidget
 from ui.dialogs.survey_setup_dialog import SurveySetupDialog
-from ui.dialogs.import_preview_dialog import ImportPreviewDialog
 from ui.dialogs.grid_generator_dialog import GridGeneratorDialog
 from ui.dialogs.point_edit_dialog import PointEditDialog
-from ui.dialogs.export_dialog import ExportDialog
-from ui.dialogs.hardware_connection_dialog import HardwareConnectionDialog
 
-from ui.icons import create_chevron_left_icon, create_chevron_right_icon, create_bluetooth_icon
+from ui.icons import create_chevron_left_icon, create_chevron_right_icon
 from utils.undo_commands import (
     SetMeasurementLuxCommand,
     AddPointCommand,
@@ -75,8 +66,11 @@ from utils.undo_commands import (
     ClearMeasurementsCommand,
 )
 from ui.workflow_controller import Operation, WorkflowController, Workspace
-from i18n.translations import tr, TranslationManager
+from i18n.translations import tr, TranslationManager, current_language
 from persistence.recovery import RecoveryStore
+
+
+from utils.app_info import APP_NAME, APP_VERSION
 
 
 class MainWindow(QMainWindow):
@@ -97,8 +91,6 @@ class MainWindow(QMainWindow):
         self.interp_result = None
         self.workflow_controller = WorkflowController()
         saved_resume = self.project.resume_state or {}
-        if saved_resume.get("workspace") == Workspace.REVIEW.value:
-            self.workflow_controller.enter_review()
         saved_point = saved_resume.get("selected_point_id")
         valid_point_ids = {point.id for point in self.project.points}
         self.active_point_id: Optional[str] = saved_point if saved_point in valid_point_ids else None
@@ -112,39 +104,30 @@ class MainWindow(QMainWindow):
         self._discard_recovery_after_replace = False
         self._resume_candidate: Optional[LuminationProject] = None
         self._resume_kind: Optional[str] = None
-        self._missing_recent_path: Optional[str] = None
 
         # Undo / Redo Stack
         self.undo_stack = QUndoStack(self)
 
-        self.setWindowTitle("Lumination — Real-Room Illuminance Survey & Photometric Reconstruction")
+        self.setWindowTitle(tr("mw_window_title", app=APP_NAME))
+        self._save_status_key = "save_not_saved"
         self.resize(1380, 860)
         self.setMinimumSize(960, 600)
 
-        # Hardware Lux Meter Sources Setup (USB Serial + Bluetooth BLE)
-        self.manual_source = ManualMeasurementSource(self)
-        self.usb_source = USBSerialMeterSource(self)
-        self.bt_source = BluetoothMeterSource(self)
-
-        self.usb_source.live_reading_stream.connect(self._on_hardware_stream)
-        self.bt_source.live_reading_stream.connect(self._on_hardware_stream)
-        self.usb_source.connection_status_changed.connect(self._on_hardware_status_changed)
-        self.bt_source.connection_status_changed.connect(self._on_hardware_status_changed)
-
         # Create Core UI Widgets
         self.canvas_widget = RoomCanvasWidget(self)
+        self.graph_window = None  # the large graph window, created on first use
+        # Point highlighted on the map; None after clicking away (the reading bar keeps its point).
+        self._map_point_id: Optional[str] = self.active_point_id
         self.survey_widget = SurveyModeWidget(self)
-        self.survey_toolbar = QToolBar("Survey controls", self)
+        self.survey_toolbar = QToolBar(tr("mw_survey_toolbar"), self)
         self.survey_toolbar.setMovable(False)
         self.survey_toolbar.setFloatable(False)
         self.survey_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         self.survey_toolbar.addWidget(self.survey_widget)
         self.addToolBar(Qt.ToolBarArea.TopToolBarArea, self.survey_toolbar)
-        self._edit_return_focus = None
         self.start_screen = StartScreenWidget(self)
         self.start_screen.new_survey_requested.connect(self._on_new_project)
         self.start_screen.open_survey_requested.connect(self._on_open_project)
-        self.start_screen.locate_project_requested.connect(self._on_open_project)
         self.start_screen.resume_requested.connect(self._on_resume_requested)
         self.start_screen.practice_requested.connect(self._on_practice_requested)
         self.table_widget = MeasurementTableWidget(self)
@@ -163,7 +146,7 @@ class MainWindow(QMainWindow):
         self.btn_toggle_left = QPushButton(central_container)
         self.btn_toggle_left.setIcon(create_chevron_left_icon())
         self.btn_toggle_left.setFixedSize(16, 48)
-        self.btn_toggle_left.setToolTip("Toggle Left Panel (Layers & Target)")
+        self.btn_toggle_left.setToolTip(tr("mw_tip_toggle_left"))
         self.btn_toggle_left.setStyleSheet("""
             QPushButton {
                 background-color: #f1f5f9;
@@ -180,7 +163,7 @@ class MainWindow(QMainWindow):
         self.btn_toggle_right = QPushButton(central_container)
         self.btn_toggle_right.setIcon(create_chevron_right_icon())
         self.btn_toggle_right.setFixedSize(16, 48)
-        self.btn_toggle_right.setToolTip("Toggle Right Panel (KPIs & Measurements)")
+        self.btn_toggle_right.setToolTip(tr("mw_tip_toggle_right"))
         self.btn_toggle_right.setStyleSheet("""
             QPushButton {
                 background-color: #f1f5f9;
@@ -243,21 +226,21 @@ class MainWindow(QMainWindow):
     def _create_empty_project() -> LuminationProject:
         """Create an empty, unmeasured in-memory placeholder for the start screen."""
         return LuminationProject(
-            name="New survey",
-            room=Room(name="Room 1", length=6.0, width=4.0, height=2.8),
+            name=tr("project_new_default"),
+            room=Room(name=tr("room_default_name"), length=6.0, width=4.0, height=2.8),
         )
 
     @staticmethod
     def _create_practice_project() -> LuminationProject:
         """Create clearly labeled sample data for practice, never for a new survey."""
-        room = Room(name="Office 201", length=6.0, width=4.0, height=2.8, measurement_plane_height=0.75, wall_margin=0.5, traversal_order="serpentine")
+        room = Room(name=tr("practice_room_name"), length=6.0, width=4.0, height=2.8, measurement_plane_height=0.75, wall_margin=0.5, traversal_order="serpentine")
         proj = LuminationProject(
-            name="Practice — Office Illuminance Survey",
+            name=tr("practice_project_name"),
             room=room,
             target_lux=500.0,
             is_practice=True,
         )
-        proj.regenerate_grid(mode="count", rows=3, cols=4, wall_margin=0.5, centered_in_cells=True, traversal_order="serpentine")
+        proj.regenerate_grid(mode="count", rows=3, cols=4, wall_margin=0.5, traversal_order="serpentine")
 
         sample_lux = [320, 370, 410, 430, 380, 450, 520, 500, 400, 490, 570, 540]
         sample_exp = [350, 400, 450, 450, 400, 500, 550, 500, 420, 500, 580, 550]
@@ -266,6 +249,7 @@ class MainWindow(QMainWindow):
                 p.lux = float(sample_lux[i])
                 p.expected_lux = float(sample_exp[i])
 
+        proj.comparison_file = tr("practice_compared_name")
         proj.is_dirty = False
         return proj
 
@@ -277,11 +261,9 @@ class MainWindow(QMainWindow):
 
     def _show_workspace(self) -> None:
         self.content_stack.setCurrentWidget(self.main_workspace)
-        if self.workflow_controller.workspace == Workspace.SURVEY:
-            self.dock_left.hide()
-            self.dock_right.hide()
-        else:
-            self._show_detail_docks()
+        # Both side panels start closed; the arrow buttons at the edges open them.
+        self.dock_left.hide()
+        self.dock_right.hide()
         self._sync_workflow_controls()
         self.recalculate_and_refresh()
 
@@ -290,13 +272,12 @@ class MainWindow(QMainWindow):
         measured = len(project.get_measured_points())
         total = len(project.points)
         title = f"{prefix}: {project.name}"
-        detail = f"{measured} of {total} readings recorded. Stored on this computer."
+        detail = tr("start_resume_detail", measured=measured, total=total)
         return title, detail
 
     def _refresh_start_screen(self) -> None:
         self._resume_candidate = None
         self._resume_kind = None
-        self._missing_recent_path = None
         recovery_error: Optional[str] = None
         self.start_screen.btn_resume.setEnabled(True)
 
@@ -304,7 +285,7 @@ class MainWindow(QMainWindow):
             recovered = self.recovery_store.load()
         except Exception as exc:
             recovered = None
-            recovery_error = f"The local recovery file could not be read: {exc}"
+            recovery_error = tr("start_recovery_unreadable", error=exc)
 
         if recovered is not None:
             recovered.project.resume_state = {
@@ -313,38 +294,17 @@ class MainWindow(QMainWindow):
             }
             self._resume_candidate = recovered.project
             self._resume_kind = "recovery"
-            title, detail = self._resume_details(recovered.project, "Resume recovered survey")
+            title, detail = self._resume_details(recovered.project, tr("start_resume_recovered"))
             if recovered.saved_at:
-                detail += f" Last recovery saved {recovered.saved_at}."
+                detail += tr("start_recovery_saved_at", when=recovered.saved_at)
             self.start_screen.show_resume(title, detail)
-            self.start_screen.show_missing_project(None)
             return
 
-        last_path = str(self.settings.value("last_project_path", "") or "")
-        if last_path and os.path.isfile(last_path):
-            try:
-                recent = self._load_project_from_path(last_path)
-            except Exception:
-                self._missing_recent_path = last_path
-            else:
-                self._resume_candidate = recent
-                self._resume_kind = "recent"
-                title, detail = self._resume_details(recent, "Resume last survey")
-                self.start_screen.show_resume(title, detail)
-        elif last_path:
-            self._missing_recent_path = last_path
-        if self._resume_candidate is None:
-            if recovery_error:
-                self.start_screen.show_resume("Recovery needs attention", recovery_error)
-                self.start_screen.btn_resume.setEnabled(False)
-            else:
-                self.start_screen.show_resume(None, None)
-        self.start_screen.show_missing_project(self._missing_recent_path)
-
-    def _load_project_from_path(self, file_path: str) -> LuminationProject:
-        from persistence.project_io import load_project
-
-        return load_project(file_path)
+        if recovery_error:
+            self.start_screen.show_resume(tr("start_recovery_attention"), recovery_error)
+            self.start_screen.btn_resume.setEnabled(False)
+        else:
+            self.start_screen.show_resume(None, None)
 
     def _on_resume_requested(self) -> None:
         if self._resume_candidate is None:
@@ -355,12 +315,12 @@ class MainWindow(QMainWindow):
     def _on_practice_requested(self) -> None:
         self._replace_project(self._create_practice_project())
         self._show_workspace()
-        self.status_bar.showMessage("Practice survey — all sample readings are simulated.", 6000)
+        self.status_bar.showMessage(tr("status_practice_started"), 6000)
 
     def _setup_docks(self) -> None:
         """Configure 2 clean collapsible side panels on left and right."""
         # Panel 1: Left Dock (Layers & Visuals + Target Illuminance)
-        self.dock_left = QDockWidget(tr("tab_layers"), self)
+        self.dock_left = QDockWidget(self._tab_text("tab_layers"), self)
         self.dock_left.setObjectName("dock_left")
         self.dock_left.setFeatures(
             QDockWidget.DockWidgetFeature.DockWidgetClosable |
@@ -370,8 +330,8 @@ class MainWindow(QMainWindow):
         self.dock_left.visibilityChanged.connect(self._on_left_dock_visibility_changed)
 
         self.left_tabs = QTabWidget(self.dock_left)
-        self.left_tabs.addTab(self.layer_widget, tr("tab_layers"))
-        self.left_tabs.addTab(self.target_panel, tr("tab_target"))
+        self.left_tabs.addTab(self.layer_widget, self._tab_text("tab_layers"))
+        self.left_tabs.addTab(self.target_panel, self._tab_text("tab_target"))
         left_scroll = QScrollArea(self.dock_left)
         left_scroll.setWidgetResizable(True)
         left_scroll.setWidget(self.left_tabs)
@@ -379,7 +339,7 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.dock_left)
 
         # Panel 2: Right Dock (Photometric KPIs + Measurements Schedule Table + DIALux)
-        self.dock_right = QDockWidget(tr("tab_kpis"), self)
+        self.dock_right = QDockWidget(self._tab_text("tab_kpis"), self)
         self.dock_right.setObjectName("dock_right")
         self.dock_right.setFeatures(
             QDockWidget.DockWidgetFeature.DockWidgetClosable |
@@ -389,9 +349,9 @@ class MainWindow(QMainWindow):
         self.dock_right.visibilityChanged.connect(self._on_right_dock_visibility_changed)
 
         self.right_tabs = QTabWidget(self.dock_right)
-        self.right_tabs.addTab(self.results_panel, tr("tab_kpis"))
-        self.right_tabs.addTab(self.table_widget, tr("tab_measurements"))
-        self.right_tabs.addTab(self.comparison_panel, tr("tab_simulated"))
+        self.right_tabs.addTab(self.results_panel, self._tab_text("tab_kpis"))
+        self.right_tabs.addTab(self.table_widget, self._tab_text("tab_measurements"))
+        self.right_tabs.addTab(self.comparison_panel, self._tab_text("tab_simulated"))
         right_scroll = QScrollArea(self.dock_right)
         right_scroll.setWidgetResizable(True)
         right_scroll.setWidget(self.right_tabs)
@@ -414,11 +374,6 @@ class MainWindow(QMainWindow):
         if opening:
             self.resizeDocks([self.dock_right], [420], Qt.Orientation.Horizontal)
 
-    def _show_detail_docks(self) -> None:
-        self.dock_left.setVisible(self.width() >= 1200)
-        self.dock_right.show()
-        self.resizeDocks([self.dock_left, self.dock_right], [360, 420], Qt.Orientation.Horizontal)
-
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         if hasattr(self, "dock_left") and self.width() < 1200 and self.dock_left.isVisible() and self.dock_right.isVisible():
@@ -432,7 +387,7 @@ class MainWindow(QMainWindow):
         self.btn_toggle_right.setIcon(create_chevron_right_icon() if visible else create_chevron_left_icon())
 
     def _setup_menus(self) -> None:
-        """Create clean menu hierarchy: File, CSV & Export, Devices, Language, Help."""
+        """Create clean menu hierarchy: File, Survey, Language, Help."""
         menubar = self.menuBar()
         for menu_action in menubar.actions():
             old_menu = menu_action.menu()
@@ -469,71 +424,34 @@ class MainWindow(QMainWindow):
         self.menu_file.addSeparator()
 
         self.act_exit = QAction(tr("menu_exit"), self)
-        self.act_exit.setShortcut(QKeySequence.StandardKey.Quit)
         self.act_exit.triggered.connect(self.close)
         self.menu_file.addAction(self.act_exit)
 
-        self.menu_survey = menubar.addMenu("&Survey")
-        self.act_enter_survey = QAction("Survey", self)
-        self.act_enter_survey.triggered.connect(self._enter_survey_workspace)
-        self.menu_survey.addAction(self.act_enter_survey)
-        self.act_enter_review = QAction("Review", self)
-        self.act_enter_review.triggered.connect(self._enter_review_workspace)
-        self.menu_survey.addAction(self.act_enter_review)
-        self.act_edit_survey = QAction("Edit survey…", self)
-        self.act_edit_survey.triggered.connect(self._enter_edit_workspace)
-        self.menu_survey.addAction(self.act_edit_survey)
-        self.act_done_editing = QAction("Done editing", self)
-        self.act_done_editing.triggered.connect(self._leave_edit_workspace)
-        self.menu_survey.addAction(self.act_done_editing)
-        self.menu_survey.addSeparator()
-        self.act_generate_grid = QAction("Change measurement grid…", self)
+        self.menu_survey = menubar.addMenu(f"&{tr('menu_survey')}")
+        self.act_generate_grid = QAction(tr("menu_change_grid"), self)
         self.act_generate_grid.triggered.connect(self._on_grid_requested)
         self.menu_survey.addAction(self.act_generate_grid)
-        self.act_clear_measurements = QAction("Clear measurements…", self)
+        self.act_clear_measurements = QAction(tr("menu_clear_measurements"), self)
         self.act_clear_measurements.triggered.connect(self._on_clear_measurements)
         self.menu_survey.addAction(self.act_clear_measurements)
-        self.menu_survey.addSeparator()
-        self.act_undo = QAction("Undo", self)
+
+        # Undo / Redo are not in any menu (the map toolbar has the buttons); Ctrl+Z and Ctrl+Y
+        # still work anywhere in the window.
+        for old in (getattr(self, "act_undo", None), getattr(self, "act_redo", None)):
+            if old is not None:
+                self.removeAction(old)
+                old.setShortcut(QKeySequence())
+                old.deleteLater()
+        self.act_undo = QAction(tr("menu_undo"), self)
         self.act_undo.setShortcut(QKeySequence.StandardKey.Undo)
         self.act_undo.triggered.connect(self._undo_if_allowed)
-        self.menu_survey.addAction(self.act_undo)
-        self.act_redo = QAction("Redo", self)
+        self.addAction(self.act_undo)
+        self.act_redo = QAction(tr("menu_redo"), self)
         self.act_redo.setShortcut(QKeySequence.StandardKey.Redo)
         self.act_redo.triggered.connect(self._redo_if_allowed)
-        self.menu_survey.addAction(self.act_redo)
+        self.addAction(self.act_redo)
 
-        # 2. CSV & Export Menu
-        self.menu_export = menubar.addMenu(f"&{tr('menu_csv_export')}")
-
-        self.act_import_csv = QAction(tr("menu_import_csv"), self)
-        self.act_import_csv.triggered.connect(self._on_import_csv)
-        self.menu_export.addAction(self.act_import_csv)
-
-        self.act_export_csv = QAction(tr("menu_export_csv"), self)
-        self.act_export_csv.triggered.connect(self._on_export_csv)
-        self.menu_export.addAction(self.act_export_csv)
-
-        self.menu_export.addSeparator()
-
-        self.act_export_pdf = QAction(tr("menu_export_pdf"), self)
-        self.act_export_pdf.setShortcut(QKeySequence.StandardKey.Print)
-        self.act_export_pdf.triggered.connect(self._on_export_pdf)
-        self.menu_export.addAction(self.act_export_pdf)
-
-        self.act_export_img = QAction(tr("menu_export_image"), self)
-        self.act_export_img.triggered.connect(self._on_export_image)
-        self.menu_export.addAction(self.act_export_img)
-
-        # 3. Devices Menu (Hardware Connectivity)
-        self.menu_devices = menubar.addMenu("&Devices")
-
-        self.act_connect_meter = QAction("Device connections…", self)
-        self.act_connect_meter.setIcon(create_bluetooth_icon())
-        self.act_connect_meter.triggered.connect(self._on_open_hardware_dialog)
-        self.menu_devices.addAction(self.act_connect_meter)
-
-        # 4. Language Menu
+        # 3. Language Menu
         self.menu_lang = menubar.addMenu(f"&{tr('menu_language')}")
 
         self.act_lang_en = QAction("English (EN)", self)
@@ -548,7 +466,7 @@ class MainWindow(QMainWindow):
         self.act_lang_de.triggered.connect(lambda: TranslationManager.get_instance().set_language("de"))
         self.menu_lang.addAction(self.act_lang_de)
 
-        # 5. Help Menu
+        # 4. Help Menu
         self.menu_help = menubar.addMenu(f"&{tr('menu_help')}")
 
         self.act_shortcuts = QAction(tr("menu_shortcuts"), self)
@@ -561,7 +479,7 @@ class MainWindow(QMainWindow):
 
         self.menu_help.addSeparator()
 
-        self.act_about = QAction(tr("menu_about"), self)
+        self.act_about = QAction(tr("menu_about", app=APP_NAME), self)
         self.act_about.triggered.connect(self._on_about)
         self.menu_help.addAction(self.act_about)
 
@@ -579,30 +497,21 @@ class MainWindow(QMainWindow):
         """)
         self.setStatusBar(self.status_bar)
 
-        self.lbl_project_status = QLabel("Ready", self)
+        self.lbl_project_status = QLabel(tr("status_ready"), self)
         self.lbl_project_status.setStyleSheet("color: #334155; font-size: 11px; padding: 0 6px;")
 
-        self.lbl_hardware_status = QLabel("Meter: Disconnected", self)
-        self.lbl_hardware_status.setStyleSheet("color: #64748b; font-size: 11px; font-weight: 600; padding: 0 8px;")
-        self.lbl_save_status = QLabel("Not saved", self)
+        self.lbl_save_status = QLabel(tr(self._save_status_key), self)
         self.lbl_save_status.setStyleSheet("color: #52606d; font-size: 11px; padding: 0 8px;")
 
         self.status_bar.addWidget(self.lbl_project_status, stretch=1)
         self.status_bar.addPermanentWidget(self.lbl_save_status)
-        self.status_bar.addPermanentWidget(self.lbl_hardware_status)
 
     def _connect_signals(self) -> None:
         """Connect inter-widget signals."""
-        self.canvas_widget.point_selected.connect(self._on_point_selected)
-        self.canvas_widget.point_edit_requested.connect(self._on_point_edit_requested)
-        self.canvas_widget.point_add_requested.connect(self._on_point_add_requested)
-        self.canvas_widget.point_delete_requested.connect(self._on_point_delete_requested)
-        self.canvas_widget.measurement_saved.connect(self._on_measurement_recorded)
+        self._connect_canvas(self.canvas_widget)
+        self.canvas_widget.fullscreen_requested.connect(self.open_graph_window)
         self.survey_widget.measurement_saved.connect(self._on_measurement_recorded)
         self.survey_widget.point_navigated.connect(self._on_point_selected)
-        self.canvas_widget.hardware_connect_requested.connect(self._on_open_hardware_dialog)
-        self.canvas_widget.undo_requested.connect(self._undo_if_allowed)
-        self.canvas_widget.redo_requested.connect(self._redo_if_allowed)
 
         self.table_widget.point_selected.connect(self._on_point_selected)
         self.table_widget.data_changed.connect(self.recalculate_and_refresh)
@@ -611,21 +520,60 @@ class MainWindow(QMainWindow):
         self.results_panel.highlight_point_requested.connect(self._on_point_selected)
         self.target_panel.target_changed.connect(self._on_target_changed)
         self.comparison_panel.display_mode_changed.connect(self._on_display_settings_changed)
+        self.comparison_panel.compare_requested.connect(self._on_compare_with_file)
         self.layer_widget.settings_changed.connect(self._on_display_settings_changed)
+
+    def _connect_canvas(self, canvas: RoomCanvasWidget) -> None:
+        canvas.point_selected.connect(self._on_point_selected)
+        canvas.point_edit_requested.connect(self._on_point_edit_requested)
+        canvas.point_add_requested.connect(self._on_point_add_requested)
+        canvas.point_delete_requested.connect(self._on_point_delete_requested)
+        canvas.measurement_saved.connect(self._on_measurement_recorded)
+        canvas.point_deselected.connect(self._on_map_point_deselected)
+        canvas.undo_requested.connect(self._undo_if_allowed)
+        canvas.redo_requested.connect(self._redo_if_allowed)
+
+    def _map_canvases(self) -> list:
+        """The main map plus the large graph window's map while it is open."""
+        canvases = [self.canvas_widget]
+        if self.graph_window is not None and self.graph_window.isVisible():
+            canvases.append(self.graph_window.canvas_widget)
+        return canvases
+
+    def open_graph_window(self) -> None:
+        """Full screen: show the graph alone in a large window (the app window stays as it is)."""
+        from ui.graph_window import GraphWindow
+
+        if self.graph_window is None:
+            self.graph_window = GraphWindow(self)
+            self._connect_canvas(self.graph_window.canvas_widget)
+        canvas = self.graph_window.canvas_widget
+        canvas.set_editing_enabled(self.canvas_widget.editing_enabled)
+        canvas.set_recording_enabled(self.canvas_widget.recording_enabled)
+        canvas.btn_undo.setEnabled(self.undo_stack.canUndo())
+        canvas.btn_redo.setEnabled(self.undo_stack.canRedo())
+        canvas.set_project(self.project, interp_result=self.interp_result, selected_point_id=self._map_point_id)
+        self.graph_window.show_large()
 
     def retranslate_ui(self) -> None:
         """Update window, menus, and side panel tabs when language switches."""
-        self.setWindowTitle(f"Lumination — {tr('dlg_new_project_title')} [{self.project.name}]")
+        self.setWindowTitle(tr("mw_window_title", app=APP_NAME))
         self._setup_menus()
+        self.survey_toolbar.setWindowTitle(tr("mw_survey_toolbar"))
+        self.btn_toggle_left.setToolTip(tr("mw_tip_toggle_left"))
+        self.btn_toggle_right.setToolTip(tr("mw_tip_toggle_right"))
+        self.lbl_save_status.setText(tr(self._save_status_key))
+        if self.content_stack.currentWidget() is self.start_screen:
+            self._refresh_start_screen()
 
-        self.dock_left.setWindowTitle(tr("tab_layers"))
-        self.left_tabs.setTabText(0, tr("tab_layers"))
-        self.left_tabs.setTabText(1, tr("tab_target"))
+        self.dock_left.setWindowTitle(self._tab_text("tab_layers"))
+        self.left_tabs.setTabText(0, self._tab_text("tab_layers"))
+        self.left_tabs.setTabText(1, self._tab_text("tab_target"))
 
-        self.dock_right.setWindowTitle(tr("tab_kpis"))
-        self.right_tabs.setTabText(0, tr("tab_kpis"))
-        self.right_tabs.setTabText(1, tr("tab_measurements"))
-        self.right_tabs.setTabText(2, tr("tab_simulated"))
+        self.dock_right.setWindowTitle(self._tab_text("tab_kpis"))
+        self.right_tabs.setTabText(0, self._tab_text("tab_kpis"))
+        self.right_tabs.setTabText(1, self._tab_text("tab_measurements"))
+        self.right_tabs.setTabText(2, self._tab_text("tab_simulated"))
 
         self.recalculate_and_refresh()
         self._sync_workflow_controls()
@@ -682,29 +630,33 @@ class MainWindow(QMainWindow):
                     self.project.room,
                     resolution=100,
                     method=self.project.visualization_settings.interpolation_method,
-                    extrapolate_to_walls=False,
+                    extrapolate_to_walls=True,
                     allow_negative=display_mode == "difference",
                 )
             else:
                 self.interp_result = None
 
-            self.canvas_widget.set_project(
-                self.project,
-                interp_result=self.interp_result,
-                selected_point_id=self.active_point_id,
-            )
+            for canvas in self._map_canvases():
+                canvas.set_project(
+                    self.project,
+                    interp_result=self.interp_result,
+                    selected_point_id=self._map_point_id,
+                )
 
             r = self.project.room
             n_meas = len(self.project.get_measured_points())
             n_tot = len(self.project.points)
-            u0_str = f"U₀: {stats.uniformity_u0:.2f}" if stats else "U₀: -"
-            avg_str = f"Avg: {stats.e_avg:.0f} lx" if stats else "Avg: - lx"
-
-            practice_prefix = "PRACTICE — " if self.project.is_practice else ""
-            self.lbl_project_status.setText(
-                f"{practice_prefix}{r.length:.1f}×{r.width:.1f}m ({r.area:.1f}m²) | "
-                f"{n_meas}/{n_tot} measured | {avg_str} | {u0_str}"
-            )
+            self.lbl_project_status.setText(tr(
+                "status_summary",
+                practice=tr("status_practice_prefix") if self.project.is_practice else "",
+                length=r.length,
+                width=r.width,
+                area=r.area,
+                measured=n_meas,
+                total=n_tot,
+                avg=f"{stats.e_avg:.0f}" if stats else "-",
+                u0=f"{stats.uniformity_u0:.2f}" if stats else "-",
+            ))
         finally:
             self._is_updating = False
 
@@ -719,7 +671,9 @@ class MainWindow(QMainWindow):
                 "workspace": self.workflow_controller.workspace.value,
                 "selected_point_id": point_id,
             }
-            self.canvas_widget.set_selected_point_id(point_id)
+            self._map_point_id = point_id
+            for canvas in self._map_canvases():
+                canvas.set_selected_point_id(point_id)
             self.table_widget.select_point(point_id)
             self.survey_widget.set_active_point(point_id)
         finally:
@@ -732,7 +686,7 @@ class MainWindow(QMainWindow):
         point_id: str,
         lux: Optional[float],
         operation_id: Optional[str] = None,
-        device_name: str = "Manual Entry",
+        device_name: str = "Manual Entry",  # stored value; shown translated in the table
         advance: bool = True,
         profile_id: Optional[str] = None,
     ) -> bool:
@@ -744,9 +698,6 @@ class MainWindow(QMainWindow):
         if lux is None and not is_correction:
             return False
         operation = Operation.CORRECT_READING if is_correction else Operation.RECORD_READING
-        if not self.workflow_controller.allows(operation):
-            self.status_bar.showMessage("Enter Edit mode to change an existing reading.", 5000)
-            return False
         event_id = operation_id or str(uuid.uuid4())
         if not self.workflow_controller.claim_operation(event_id):
             return False
@@ -769,7 +720,7 @@ class MainWindow(QMainWindow):
             if next_point:
                 self._on_point_selected(next_point)
             else:
-                self.status_bar.showMessage("Survey complete. Every point has a reading.", 5000)
+                self.status_bar.showMessage(tr("status_survey_complete"), 5000)
         return True
 
     def _on_data_modified(self) -> None:
@@ -792,15 +743,13 @@ class MainWindow(QMainWindow):
         self._sync_workflow_controls()
 
     def _on_target_changed(self, _value: float) -> None:
-        if self.workflow_controller.allows(Operation.CHANGE_TARGET):
-            self.recalculate_and_refresh()
-            self._write_recovery_snapshot()
+        self.recalculate_and_refresh()
+        self._write_recovery_snapshot()
 
     def _on_display_settings_changed(self, _value=None) -> None:
-        if self.workflow_controller.allows(Operation.CHANGE_DISPLAY):
-            self.project.mark_modified()
-            self.recalculate_and_refresh()
-            self._write_recovery_snapshot()
+        self.project.mark_modified()
+        self.recalculate_and_refresh()
+        self._write_recovery_snapshot()
 
     def _write_recovery_snapshot(self) -> None:
         try:
@@ -811,116 +760,48 @@ class MainWindow(QMainWindow):
                 workspace=workspace_name,
                 selected_point_id=self.active_point_id,
             )
-            self.lbl_save_status.setText("Recovery saved locally")
-            self.lbl_save_status.setToolTip("The current working copy is stored in the local recovery file.")
+            self._set_save_status("save_recovery_saved", tr("save_recovery_tip"))
         except Exception as exc:
-            self.lbl_save_status.setText("Recovery save failed")
-            self.lbl_save_status.setToolTip(f"The change remains in memory. Recovery could not be saved: {exc}")
+            self._set_save_status("save_recovery_failed", tr("save_recovery_failed_tip", error=exc))
+
+    def _show_only_language_menu(self, only_language: bool) -> None:
+        """Start screen and new-survey setup: only the Language menu is offered."""
+        for menu in (self.menu_file, self.menu_survey, self.menu_help):
+            menu.menuAction().setVisible(not only_language)
+        for action in (self.act_new, self.act_open, self.act_exit):
+            action.setEnabled(not only_language)
 
     def _sync_workflow_controls(self) -> None:
         active = self.content_stack.currentWidget() is self.main_workspace
-        editing = self.workflow_controller.workspace == Workspace.EDIT
-        surveying = self.workflow_controller.workspace == Workspace.SURVEY
-        self.survey_toolbar.setVisible(active and self.workflow_controller.workspace != Workspace.REVIEW)
+        self._show_only_language_menu(not active)
+        self.survey_toolbar.setVisible(active)
         self.menu_survey.setEnabled(active)
-        self.menu_export.setEnabled(active)
-        self.menu_devices.setEnabled(active)
         self.act_save.setEnabled(active)
         self.act_save_as.setEnabled(active)
-        self.survey_widget.set_workflow_permissions(
-            recording=surveying or editing,
-            correction=editing,
-        )
-        self.table_widget.set_edit_allowed(editing)
-        self.canvas_widget.set_editing_enabled(editing)
-        self.canvas_widget.set_recording_enabled(active and (surveying or editing))
-        self.canvas_widget.btn_undo.setEnabled(
-            self.undo_stack.canUndo() and self._command_allowed(undo=True)
-        )
-        self.canvas_widget.btn_redo.setEnabled(
-            self.undo_stack.canRedo() and self._command_allowed(undo=False)
-        )
-        self.act_done_editing.setEnabled(editing)
-        self.act_edit_survey.setEnabled(not editing)
-        self.act_generate_grid.setEnabled(editing)
-        self.act_clear_measurements.setEnabled(editing)
-        self.act_import_csv.setEnabled(editing)
-        self.act_enter_review.setEnabled(not editing)
-        self.act_enter_survey.setEnabled(not editing)
-        self.act_undo.setEnabled(self.undo_stack.canUndo() and self._command_allowed(undo=True))
-        self.act_redo.setEnabled(self.undo_stack.canRedo() and self._command_allowed(undo=False))
+        self.survey_widget.set_workflow_permissions(recording=active, correction=active)
+        self.table_widget.set_edit_allowed(active)
+        for canvas in self._map_canvases():
+            canvas.set_editing_enabled(active)
+            canvas.set_recording_enabled(active)
+            canvas.btn_undo.setEnabled(self.undo_stack.canUndo())
+            canvas.btn_redo.setEnabled(self.undo_stack.canRedo())
+        self.act_generate_grid.setEnabled(active)
+        self.act_clear_measurements.setEnabled(active)
+        self.act_undo.setEnabled(self.undo_stack.canUndo())
+        self.act_redo.setEnabled(self.undo_stack.canRedo())
 
     def _on_history_changed(self, _enabled: bool) -> None:
         self._sync_workflow_controls()
 
-    def _enter_survey_workspace(self) -> None:
-        self.workflow_controller.enter_survey()
-        self.dock_left.hide()
-        self.dock_right.hide()
-        self._sync_workflow_controls()
-        self.status_bar.showMessage("Survey mode", 2500)
-
-    def _enter_review_workspace(self) -> None:
-        self.workflow_controller.enter_review()
-        self._show_detail_docks()
-        self._sync_workflow_controls()
-        self.status_bar.showMessage("Review mode. Enter Edit mode to change survey data.", 4000)
-
-    def _enter_edit_workspace(self) -> None:
-        if self.workflow_controller.workspace != Workspace.EDIT:
-            self._edit_return_focus = QApplication.focusWidget()
-        self.workflow_controller.enter_edit()
-        self._show_detail_docks()
-        self._sync_workflow_controls()
-        self.status_bar.showMessage("Edit mode. Survey changes are undoable.", 4000)
-
-    def _leave_edit_workspace(self) -> None:
-        point_id = self.workflow_controller.leave_edit({point.id for point in self.project.points})
-        if point_id is None and self.project.points:
-            point_id = next(
-                (point.id for point in self.project.get_unmeasured_points()),
-                self.project.points[0].id,
-            )
-        self._sync_workflow_controls()
-        if point_id:
-            self._on_point_selected(point_id)
-        if self.workflow_controller.workspace == Workspace.SURVEY:
-            self.dock_left.hide()
-            self.dock_right.hide()
-        if self._edit_return_focus is not None and self._edit_return_focus.isVisible():
-            self._edit_return_focus.setFocus()
-        self._edit_return_focus = None
-        self.status_bar.showMessage("Returned to the previous workspace.", 3000)
-
-    def _command_allowed(self, undo: bool) -> bool:
-        index = self.undo_stack.index() - 1 if undo else self.undo_stack.index()
-        if index < 0 or index >= self.undo_stack.count():
-            return False
-        command_object = self.undo_stack.command(index)
-        operation_name = getattr(command_object, "workflow_operation", "change_point")
-        try:
-            operation = Operation(operation_name)
-        except ValueError:
-            return False
-        return self.workflow_controller.allows(operation)
-
     def _undo_if_allowed(self) -> None:
-        if self.undo_stack.canUndo() and self._command_allowed(undo=True):
+        if self.undo_stack.canUndo():
             self.undo_stack.undo()
-        elif self.undo_stack.canUndo():
-            self.status_bar.showMessage("Enter Edit mode to undo survey structure changes.", 4000)
 
     def _redo_if_allowed(self) -> None:
-        if self.undo_stack.canRedo() and self._command_allowed(undo=False):
+        if self.undo_stack.canRedo():
             self.undo_stack.redo()
-        elif self.undo_stack.canRedo():
-            self.status_bar.showMessage("Enter Edit mode to redo survey structure changes.", 4000)
 
     def _on_table_edit_requested(self, point_id: str, column: int, value: object) -> None:
-        if not self.workflow_controller.allows(Operation.CHANGE_POINT):
-            self.status_bar.showMessage("Choose Survey → Edit survey before changing table values.", 5000)
-            self.table_widget.refresh()
-            return
         point = self.project.find_point_by_id(point_id)
         if point is None:
             return
@@ -942,8 +823,6 @@ class MainWindow(QMainWindow):
         self.undo_stack.push(UpdatePointCommand(self.project, updated, self._on_data_modified))
 
     def _on_grid_requested(self) -> None:
-        if not self.workflow_controller.allows(Operation.CHANGE_ROOM_OR_GRID):
-            return
         candidate = copy.deepcopy(self.project)
         dialog = GridGeneratorDialog(candidate, self)
         if dialog.exec() == GridGeneratorDialog.DialogCode.Accepted:
@@ -961,22 +840,11 @@ class MainWindow(QMainWindow):
                 self.recalculate_and_refresh()
 
     def _on_clear_measurements(self) -> None:
-        if not self.workflow_controller.allows(Operation.CHANGE_POINT):
-            return
-        if QMessageBox.question(
-            self,
-            "Clear measurements",
-            "Clear every recorded lux value? You can undo this action.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        ) != QMessageBox.StandardButton.Yes:
+        if self._ask_yes_no(tr("dlg_clear_title"), tr("dlg_clear_text")) != QMessageBox.StandardButton.Yes:
             return
         self.undo_stack.push(ClearMeasurementsCommand(self.project, self._on_data_modified))
 
     def _on_point_edit_requested(self, point_id: str) -> None:
-        if not self.workflow_controller.allows(Operation.CHANGE_POINT):
-            self.status_bar.showMessage("Choose Survey → Edit survey to change point details.", 5000)
-            return
         pt = self.project.find_point_by_id(point_id)
         if pt:
             dlg = PointEditDialog(copy.deepcopy(pt), self.project.room, self)
@@ -984,19 +852,13 @@ class MainWindow(QMainWindow):
                 self.undo_stack.push(UpdatePointCommand(self.project, dlg.point, self._on_data_modified))
 
     def _on_point_add_requested(self, x: float, y: float) -> None:
-        if not self.workflow_controller.allows(Operation.CHANGE_POINT):
-            self.status_bar.showMessage("Choose Survey → Edit survey before adding a point.", 5000)
-            return
         candidate = copy.deepcopy(self.project)
-        pt = candidate.add_custom_point(x, y, notes="Custom Sensor")
+        pt = candidate.add_custom_point(x, y, notes="Custom Sensor")  # stored; shown translated
         cmd = ReplaceProjectDataCommand(self.project, candidate, f"Add Point {pt.id}", self._on_data_modified)
         self.undo_stack.push(cmd)
         self._on_point_selected(pt.id)
 
     def _on_point_delete_requested(self, point_id: str) -> None:
-        if not self.workflow_controller.allows(Operation.CHANGE_POINT):
-            self.status_bar.showMessage("Choose Survey → Edit survey before deleting a point.", 5000)
-            return
         cmd = DeletePointCommand(self.project, point_id, callback=self._on_data_modified)
         self.undo_stack.push(cmd)
         remaining = {point.id for point in self.project.points}
@@ -1007,55 +869,17 @@ class MainWindow(QMainWindow):
         if self.active_point_id:
             self._on_point_selected(self.active_point_id)
         else:
-            self.canvas_widget.set_selected_point_id(None)
+            self._map_point_id = None
+            for canvas in self._map_canvases():
+                canvas.set_selected_point_id(None)
 
-    def _on_open_hardware_dialog(self) -> None:
-        dlg = HardwareConnectionDialog(self.usb_source, self.bt_source, self)
-        dlg.reading_captured.connect(self._on_hardware_reading_captured)
-        dlg.exec()
-
-    def _on_hardware_reading_captured(self, sample: MeasurementSample) -> None:
-        """Capture one validated, identified meter sample into the active point."""
-        if not self.active_point_id and self.project.points:
-            self.active_point_id = next(
-                (point.id for point in self.project.get_unmeasured_points()),
-                None,
-            )
-            self.workflow_controller.select_point(self.active_point_id)
-
-        if self.active_point_id:
-            self._on_measurement_recorded(
-                self.active_point_id,
-                sample.lux,
-                operation_id=sample.sample_id,
-                device_name=(
-                    f"Practice ({sample.profile_id or sample.source_id})"
-                    if sample.simulated
-                    else sample.profile_id or sample.source_id
-                ),
-                profile_id=sample.profile_id,
-            )
-
-    def _on_hardware_stream(self, lux: float) -> None:
-        """Handle continuous stream reading from connected USB or Bluetooth meter."""
-        source_name = "USB" if self.usb_source.is_connected else "Bluetooth"
-        self.lbl_hardware_status.setText(
-            f"Meter: {source_name} raw stream — no verified profile; capture unavailable"
-        )
-        self.lbl_hardware_status.setStyleSheet("color: #92400e; font-size: 11px; font-weight: 600; padding: 0 8px;")
-        self.lbl_hardware_status.setToolTip(f"Unverified stream value: {lux:.1f} lx")
-
-    def _on_hardware_status_changed(self, connected: bool, desc: str) -> None:
-        lower_desc = desc.lower()
-        if any(term in lower_desc for term in ("unverified", "unsupported", "no qualified", "no verified", "simulated")):
-            self.lbl_hardware_status.setText(f"Meter: {desc}")
-            self.lbl_hardware_status.setStyleSheet("color: #92400e; font-size: 11px; font-weight: 600; padding: 0 8px;")
-        elif connected:
-            self.lbl_hardware_status.setText(f"Meter: {desc}")
-            self.lbl_hardware_status.setStyleSheet("color: #16a34a; font-size: 11px; font-weight: bold; padding: 0 8px;")
-        else:
-            self.lbl_hardware_status.setText("Meter: Disconnected")
-            self.lbl_hardware_status.setStyleSheet("color: #64748b; font-size: 11px; font-weight: 600; padding: 0 8px;")
+    def _on_map_point_deselected(self) -> None:
+        """Clicked away from a point on a map: no point is highlighted; the reading bar keeps it."""
+        self._map_point_id = None
+        for canvas in self._map_canvases():
+            if canvas.selected_point_id is not None:
+                canvas.set_selected_point_id(None)
+            canvas.popup_editor.hide()
 
     # --- Menu Handlers ---
 
@@ -1063,18 +887,7 @@ class MainWindow(QMainWindow):
         self._discard_recovery_after_replace = False
         if not self.project.is_dirty:
             return True
-        choice = QMessageBox(self)
-        choice.setIcon(QMessageBox.Icon.Warning)
-        choice.setWindowTitle("Unsaved survey")
-        choice.setText("This survey has changes that are not saved to its project file.")
-        choice.setInformativeText("Save before replacing it?")
-        choice.setStandardButtons(
-            QMessageBox.StandardButton.Save
-            | QMessageBox.StandardButton.Discard
-            | QMessageBox.StandardButton.Cancel
-        )
-        choice.setDefaultButton(QMessageBox.StandardButton.Save)
-        result = choice.exec()
+        result = self._ask_save_discard_cancel(tr("dlg_unsaved_replace"))
         if result == QMessageBox.StandardButton.Save:
             return self._on_save_project()
         if result == QMessageBox.StandardButton.Discard:
@@ -1089,8 +902,6 @@ class MainWindow(QMainWindow):
         self.project = project
         self.workflow_controller = WorkflowController()
         resume = project.resume_state or {}
-        if resume.get("workspace") == Workspace.REVIEW.value:
-            self.workflow_controller.enter_review()
         valid_ids = {point.id for point in project.points}
         point_id = resume.get("selected_point_id")
         if point_id not in valid_ids:
@@ -1099,15 +910,22 @@ class MainWindow(QMainWindow):
                 project.points[0].id if project.points else None,
             )
         self.active_point_id = point_id
+        self._map_point_id = point_id
         self.workflow_controller.select_point(point_id)
         self.undo_stack.clear()
         self._sync_workflow_controls()
         self.load_project_into_ui()
-        self.lbl_save_status.setText("Saved locally" if not project.is_dirty and project.file_path else "Not saved")
+        self._set_save_status("save_saved_locally" if not project.is_dirty and project.file_path else "save_not_saved")
 
     def _on_new_project(self) -> None:
-        dlg = SurveySetupDialog(self)
-        if dlg.exec() == SurveySetupDialog.DialogCode.Accepted:
+        dlg = SurveySetupDialog(self, settings=self.settings)
+        self._show_only_language_menu(True)
+        try:
+            accepted = dlg.exec() == SurveySetupDialog.DialogCode.Accepted
+        finally:
+            self._sync_workflow_controls()
+            dlg.deleteLater()
+        if accepted:
             new_proj = dlg.get_created_project()
             if new_proj and self._confirm_project_replacement():
                 self._replace_project(new_proj)
@@ -1115,33 +933,105 @@ class MainWindow(QMainWindow):
                 updated, created = dlg.import_counts
                 if updated or created:
                     self.status_bar.showMessage(
-                        f"Survey created with {updated} imported readings and {created} imported points.", 5000
+                        tr("status_created_with_import", updated=updated, created=created), 5000
                     )
 
     def _on_open_project(self) -> None:
         from persistence.project_io import load_project
         file_path, _ = QFileDialog.getOpenFileName(
             self,
-            "Open Lumination Project",
+            tr("dlg_open_project_title", app=APP_NAME),
             "",
-            "Lumination Project (*.luxproj);;JSON Files (*.json);;All Files (*.*)",
+            ";;".join((
+                tr("filter_all_supported"),
+                tr("filter_project", app=APP_NAME),
+                tr("filter_excel"),
+                tr("filter_csv"),
+                tr("filter_json"),
+            )),
         )
         if file_path:
+            from persistence.table_io import is_table_file
+            if is_table_file(file_path):
+                self._open_table(file_path)
+                return
             if not self._confirm_project_replacement():
                 return
             try:
                 proj = load_project(file_path)
                 self._replace_project(proj)
-                self.settings.setValue("last_project_path", file_path)
                 self._show_workspace()
-                self.status_bar.showMessage(f"Project loaded: {os.path.basename(file_path)}", 4000)
+                self.status_bar.showMessage(tr("status_project_loaded", name=os.path.basename(file_path)), 4000)
             except Exception as e:
-                QMessageBox.critical(self, "Load Error", f"Failed to load project file:\n{e}")
+                QMessageBox.critical(self, tr("err_load_title"), tr("err_load_text", error=e))
+
+    def _open_table(self, file_path: str) -> bool:
+        """Build a new survey from an Excel or CSV grid of readings."""
+        from persistence.table_io import TableError, project_from_table, read_table
+        from ui.dialogs.table_setup_dialog import TableSetupDialog
+
+        try:
+            values = read_table(file_path)
+        except TableError as exc:
+            QMessageBox.warning(self, tr("table_err_title"), str(exc))
+            return False
+        rows, cols = len(values), max(len(row) for row in values)
+        dialog = TableSetupDialog(rows, cols, self, settings=self.settings)
+        accepted = dialog.exec() == TableSetupDialog.DialogCode.Accepted
+        dialog.deleteLater()
+        if not accepted:
+            return False
+        name = os.path.splitext(os.path.basename(file_path))[0]
+        try:
+            project = project_from_table(
+                values,
+                name,
+                dialog.spacing_x.value(),
+                dialog.spacing_y.value(),
+                dialog.margin.value(),
+                dialog.traversal_order,
+            )
+        except TableError as exc:
+            QMessageBox.warning(self, tr("table_err_title"), str(exc))
+            return False
+        if not self._confirm_project_replacement():
+            return False
+        self._replace_project(project)
+        self._show_workspace()
+        self.status_bar.showMessage(tr("status_table_opened", name=os.path.basename(file_path)), 6000)
+        return True
+
+    def _on_compare_with_file(self) -> bool:
+        """Compare the survey with a Luxious project, Excel or CSV grid of the same size."""
+        from persistence.comparison_io import apply_comparison
+        from persistence.table_io import TableError
+        from utils.undo_commands import SetComparisonCommand
+
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            tr("cmp_dialog_title"),
+            "",
+            ";;".join((
+                tr("filter_all_supported"),
+                tr("filter_project", app=APP_NAME),
+                tr("filter_excel"),
+                tr("filter_csv"),
+            )),
+        )
+        if not file_path:
+            return False
+        candidate = copy.deepcopy(self.project)
+        try:
+            count = apply_comparison(candidate, file_path)
+        except TableError as exc:
+            QMessageBox.warning(self, tr("table_err_title"), str(exc))
+            return False
+        self.undo_stack.push(SetComparisonCommand(self.project, candidate, callback=self._on_data_modified))
+        self.status_bar.showMessage(tr("cmp_status_loaded", name=os.path.basename(file_path), count=count), 5000)
+        return True
 
     def _save_resume_context(self) -> None:
         workspace = self.workflow_controller.workspace
-        if workspace == Workspace.EDIT:
-            workspace = self.workflow_controller.snapshot().edit_return_workspace or Workspace.SURVEY
         self.project.resume_state = {
             "workspace": workspace.value,
             "selected_point_id": self.active_point_id,
@@ -1150,45 +1040,85 @@ class MainWindow(QMainWindow):
     def _on_save_project(self) -> bool:
         self._save_resume_context()
         if not self.project.file_path:
-            return self._on_save_project_as()
+            return self._ask_and_save_project()
         from persistence.project_io import save_project
         try:
+            self.project.language = current_language()
             save_project(self.project, self.project.file_path)
-            self.settings.setValue("last_project_path", self.project.file_path)
             self.recovery_store.discard()
-            self.lbl_save_status.setText("Saved locally")
-            self.lbl_save_status.setToolTip(self.project.file_path)
-            self.status_bar.showMessage("Project saved successfully.", 3000)
+            self._set_save_status("save_saved_locally", self.project.file_path)
+            self.status_bar.showMessage(tr("status_project_saved"), 3000)
             return True
         except Exception as e:
-            self.lbl_save_status.setText("Save failed")
-            self.lbl_save_status.setToolTip(f"Changes remain in memory. Save failed: {e}")
-            QMessageBox.critical(self, "Save Error", f"Failed to save project:\n{e}")
+            self._set_save_status("save_failed", tr("save_failed_tip", error=e))
+            QMessageBox.critical(self, tr("err_save_title"), tr("err_save_text", error=e))
             return False
 
+    def _save_as_types(self) -> list:
+        """(file filter, extension, kind) offered by Save As, in order."""
+        return [
+            (tr("filter_project", app=APP_NAME), ".luxproj", "project"),
+            (tr("filter_csv"), ".csv", "csv"),
+            (tr("filter_excel"), ".xlsx", "excel"),
+            (tr("filter_pdf"), ".pdf", "pdf"),
+            (tr("filter_png"), ".png", "png"),
+        ]
+
+    def _default_file_stem(self) -> str:
+        stem = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in self.project.name.strip().lower())
+        return stem.strip("_") or "survey"
+
     def _on_save_project_as(self) -> bool:
-        self._save_resume_context()
-        from persistence.project_io import save_project
-        default_name = f"{self.project.name.replace(' ', '_').lower()}.luxproj"
+        """Save the survey as a project file, a CSV table or a PDF report."""
+        types = self._save_as_types()
+        file_path, selected = QFileDialog.getSaveFileName(
+            self,
+            tr("dlg_save_as_any"),
+            self._default_file_stem() + ".luxproj",
+            ";;".join(entry[0] for entry in types),
+        )
+        if not file_path:
+            return False
+        extension = os.path.splitext(file_path)[1].lower()
+        kind = next((k for _f, ext, k in types if ext == extension), None)
+        if kind is None:
+            kind, ext = next(((k, e) for f, e, k in types if f == selected), ("project", ".luxproj"))
+            file_path += ext
+        if kind in ("csv", "excel"):
+            return self._write_table(file_path, kind)
+        if kind == "pdf":
+            return self._write_pdf(file_path)
+        if kind == "png":
+            return self._write_png(file_path)
+        return self._save_project_to(file_path)
+
+    def _ask_and_save_project(self) -> bool:
         file_path, _ = QFileDialog.getSaveFileName(
             self,
-            "Save Lumination Project As",
-            default_name,
-            "Lumination Project (*.luxproj);;All Files (*.*)",
+            tr("dlg_save_as_title", app=APP_NAME),
+            self._default_file_stem() + ".luxproj",
+            ";;".join((tr("filter_project", app=APP_NAME), tr("filter_all"))),
         )
+        if not file_path:
+            return False
+        if not os.path.splitext(file_path)[1]:
+            file_path += ".luxproj"
+        return self._save_project_to(file_path)
+
+    def _save_project_to(self, file_path: str) -> bool:
+        self._save_resume_context()
+        from persistence.project_io import save_project
         if file_path:
             try:
+                self.project.language = current_language()
                 save_project(self.project, file_path)
-                self.settings.setValue("last_project_path", file_path)
                 self.recovery_store.discard()
-                self.lbl_save_status.setText("Saved locally")
-                self.lbl_save_status.setToolTip(file_path)
-                self.status_bar.showMessage(f"Saved as: {os.path.basename(file_path)}", 4000)
+                self._set_save_status("save_saved_locally", file_path)
+                self.status_bar.showMessage(tr("status_saved_as", name=os.path.basename(file_path)), 4000)
                 return True
             except Exception as e:
-                self.lbl_save_status.setText("Save failed")
-                self.lbl_save_status.setToolTip(f"Changes remain in memory. Save failed: {e}")
-                QMessageBox.critical(self, "Save Error", f"Failed to save project file:\n{e}")
+                self._set_save_status("save_failed", tr("save_failed_tip", error=e))
+                QMessageBox.critical(self, tr("err_save_title"), tr("err_save_text", error=e))
                 return False
         return False
 
@@ -1198,18 +1128,7 @@ class MainWindow(QMainWindow):
             event.accept()
             return
 
-        choice = QMessageBox(self)
-        choice.setIcon(QMessageBox.Icon.Warning)
-        choice.setWindowTitle("Unsaved survey")
-        choice.setText("This survey has changes that are not saved to its project file.")
-        choice.setInformativeText("Save the project before closing?")
-        choice.setStandardButtons(
-            QMessageBox.StandardButton.Save
-            | QMessageBox.StandardButton.Discard
-            | QMessageBox.StandardButton.Cancel
-        )
-        choice.setDefaultButton(QMessageBox.StandardButton.Save)
-        result = choice.exec()
+        result = self._ask_save_discard_cancel(tr("dlg_unsaved_close"))
 
         if result == QMessageBox.StandardButton.Save:
             if self._on_save_project():
@@ -1222,128 +1141,116 @@ class MainWindow(QMainWindow):
         else:
             event.ignore()
 
-    def _on_import_csv(self) -> None:
-        if not self.workflow_controller.allows(Operation.IMPORT_READINGS):
-            self.status_bar.showMessage("Choose Survey → Edit survey before importing measurements.", 5000)
-            return
-        from persistence.csv_io import import_measurements_from_csv
-        file_path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Import Measurements CSV",
-            "",
-            "CSV Files (*.csv);;Text Files (*.txt);;All Files (*.*)",
-        )
-        if file_path:
-            try:
-                candidate = copy.deepcopy(self.project)
-                upd, crt = import_measurements_from_csv(candidate, file_path)
-                if not upd and not crt:
-                    self.status_bar.showMessage("The file contained no importable measurements.", 5000)
-                    return
-                preview = ImportPreviewDialog(candidate, upd, crt, self)
-                if preview.exec() != ImportPreviewDialog.DialogCode.Accepted:
-                    return
-                self.undo_stack.push(
-                    ReplaceProjectDataCommand(
-                        self.project,
-                        candidate,
-                        "Import Measurements",
-                        self._on_data_modified,
-                    )
-                )
-                self.status_bar.showMessage(
-                    f"Import applied: {upd} points updated, {crt} new points added.", 5000
-                )
-            except Exception as e:
-                QMessageBox.critical(self, "Import Error", f"Failed to import CSV:\n{e}")
+    def _write_table(self, file_path: str, kind: str) -> bool:
+        """Save the readings as a grid table (CSV or Excel), in the layout File > Open reads back."""
+        from persistence.table_io import write_table
+        try:
+            extra = write_table(self.project, file_path)
+        except Exception as e:
+            error_key = "err_export_excel" if kind == "excel" else "err_export_csv"
+            QMessageBox.critical(self, tr("err_export_title"), tr(error_key, error=e))
+            return False
+        if extra:
+            QMessageBox.warning(
+                self,
+                tr("table_extra_points_title"),
+                tr("table_extra_points_text", points=", ".join(point.id for point in extra)),
+            )
+        status_key = "status_saved_excel" if kind == "excel" else "status_saved_csv"
+        self.status_bar.showMessage(tr(status_key, name=os.path.basename(file_path)), 5000)
+        return True
 
-    def _on_export_csv(self) -> None:
-        from persistence.csv_io import export_measurements_to_csv
-        default_name = f"{self.project.name.replace(' ', '_').lower()}_measurements.csv"
-        file_path, _ = QFileDialog.getSaveFileName(
-            self,
-            "Export Measurements to CSV",
-            default_name,
-            "CSV Files (*.csv);;All Files (*.*)",
-        )
-        if file_path:
-            try:
-                export_measurements_to_csv(self.project, file_path)
-                QMessageBox.information(self, "Export Successful", f"Measurements exported to:\n{file_path}")
-            except Exception as e:
-                QMessageBox.critical(self, "Export Error", f"Failed to export CSV:\n{e}")
+    def _write_png(self, file_path: str) -> bool:
+        """The main map exactly as shown (current zoom), with its colour bar, as a PNG image."""
+        figure = self.canvas_widget.figure
+        try:
+            figure.savefig(file_path, format="png", dpi=200, facecolor=figure.get_facecolor(), bbox_inches="tight")
+        except Exception as e:
+            QMessageBox.critical(self, tr("err_export_title"), tr("err_export_png", error=e))
+            return False
+        self.status_bar.showMessage(tr("status_saved_png", name=os.path.basename(file_path)), 5000)
+        return True
 
-    def _on_export_pdf(self) -> None:
+    def _write_pdf(self, file_path: str) -> bool:
         from reporting.pdf_report import generate_pdf_report
-        default_name = f"{self.project.name.replace(' ', '_').lower()}_report.pdf"
-        file_path, _ = QFileDialog.getSaveFileName(
-            self,
-            "Export PDF Survey Report",
-            default_name,
-            "PDF Documents (*.pdf);;All Files (*.*)",
-        )
-        if file_path:
-            try:
-                generate_pdf_report(self.project, file_path)
-                QMessageBox.information(self, "PDF Report Generated", f"Report saved successfully to:\n{file_path}")
-            except Exception as e:
-                QMessageBox.critical(self, "PDF Export Error", f"Failed to generate PDF report:\n{e}")
-
-    def _on_export_image(self) -> None:
-        from reporting.chart_exporter import export_room_map_image
-        default_name = f"{self.project.name.replace(' ', '_').lower()}_map.png"
-        file_path, _ = QFileDialog.getSaveFileName(
-            self,
-            "Export High-Resolution Map Image",
-            default_name,
-            "PNG Images (*.png);;JPEG Images (*.jpg);;PDF Document (*.pdf);;All Files (*.*)",
-        )
-        if file_path:
-            try:
-                img_bytes = export_room_map_image(self.project, dpi=300)
-                with open(file_path, "wb") as f:
-                    f.write(img_bytes)
-                QMessageBox.information(self, "Export Successful", f"High-resolution map saved to:\n{file_path}")
-            except Exception as e:
-                QMessageBox.critical(self, "Export Error", f"Failed to save image:\n{e}")
+        try:
+            generate_pdf_report(self.project, file_path, lang=current_language())
+        except Exception as e:
+            QMessageBox.critical(self, tr("err_pdf_title"), tr("err_pdf", error=e))
+            return False
+        self.status_bar.showMessage(tr("status_saved_pdf", name=os.path.basename(file_path)), 5000)
+        return True
 
     def _on_show_shortcuts(self) -> None:
+        def key(action: QAction) -> str:
+            return action.shortcut().toString(QKeySequence.SequenceFormat.NativeText)
+
+        items = [
+            tr("help_sc_click"),
+            tr("help_sc_enter"),
+            tr("help_sc_delete"),
+            tr("help_sc_undo", key=key(self.act_undo)),
+            tr("help_sc_redo", key=key(self.act_redo)),
+            tr("help_sc_save", key=key(self.act_save)),
+            tr("help_sc_open", key=key(self.act_open)),
+            tr("help_sc_new", key=key(self.act_new)),
+            tr("help_sc_wheel"),
+            tr("help_sc_escape"),
+        ]
         QMessageBox.information(
             self,
-            "Keyboard Shortcuts Reference",
-            "<h3>Lumination Keyboard Shortcuts</h3>"
-            "<ul>"
-            "<li><b>Click point</b>: Select a point; enter pending readings in Survey, or correct recorded readings in Edit</li>"
-            "<li><b>Enter in the reading field</b>: Record a valid reading and select the next pending point</li>"
-            "<li><b>Backspace / Delete on the map in Edit mode</b>: Delete the selected point</li>"
-            "<li><b>Ctrl + Z</b>: Undo last action</li>"
-            f"<li><b>{self.act_redo.shortcut().toString(QKeySequence.SequenceFormat.NativeText)}</b>: Redo undone action</li>"
-            "<li><b>Ctrl + S</b>: Save project</li>"
-            "<li><b>Ctrl + O</b>: Open project</li>"
-            "<li><b>Ctrl + N</b>: Create new room project</li>"
-            "<li><b>Mouse Wheel</b>: Zoom in / Zoom out on room canvas</li>"
-            "<li><b>Escape</b>: Exit custom point placement mode / close editor tag</li>"
-            "</ul>",
+            tr("help_shortcuts_title"),
+            f"<h3>{tr('help_shortcuts_heading', app=APP_NAME)}</h3><ul>"
+            + "".join(f"<li>{item}</li>" for item in items)
+            + "</ul>",
         )
 
     def _on_show_methodology(self) -> None:
-        QMessageBox.information(
-            self,
-            "Measurement & Reconstruction Methodology",
-            "<h3>Physical Illuminance Reconstruction</h3>"
-            "<p>Lumination is designed for real physical lux meter surveys.</p>"
-            "<p><b>Spatial Interpolation:</b> 2D Scipy spatial algorithms (Linear, Cubic, RBF) "
-            "reconstruct the continuous illuminance field across the room measurement plane from discrete physical readings.</p>"
-            "<p><b>Scientific Integrity:</b> Raw physical measurements remain immutable. "
-            "Interpolated values represent mathematical estimates and are clearly distinguished from recorded points.</p>",
-        )
+        QMessageBox.information(self, tr("help_method_title"), tr("help_method_body", app=APP_NAME))
 
     def _on_about(self) -> None:
         QMessageBox.about(
             self,
-            "About Lumination",
-            "<h2>Lumination</h2>"
-            "<p><b>Real-Room Illuminance Survey & Photometric Analysis</b></p>"
-            "<p>Version 1.4.0</p>"
-            "<p>Engineered for precision physical lighting audits, hardware lux meter acquisition, and spatial illuminance reconstruction.</p>",
+            tr("menu_about", app=APP_NAME),
+            f"<h2>{APP_NAME}</h2>"
+            f"<p><b>{tr('about_subtitle')}</b></p>"
+            f"<p>{tr('about_version', version=APP_VERSION)}</p>"
+            f"<p>{tr('about_text')}</p>",
         )
+
+    # --- Message helpers with translated buttons (Qt ships no Romanian strings) ---
+
+    @staticmethod
+    def _tab_text(key: str) -> str:
+        """Tab labels treat '&' as a shortcut marker, so show a literal ampersand."""
+        return tr(key).replace("&", "&&")
+
+    def _set_save_status(self, key: str, tooltip: str = "") -> None:
+        self._save_status_key = key
+        self.lbl_save_status.setText(tr(key))
+        self.lbl_save_status.setToolTip(tooltip)
+
+    def _ask_yes_no(self, title: str, text: str) -> QMessageBox.StandardButton:
+        box = QMessageBox(QMessageBox.Icon.Question, title, text, parent=self)
+        box.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        box.setDefaultButton(QMessageBox.StandardButton.No)
+        box.button(QMessageBox.StandardButton.Yes).setText(tr("btn_yes"))
+        box.button(QMessageBox.StandardButton.No).setText(tr("btn_no"))
+        return QMessageBox.StandardButton(box.exec())
+
+    def _ask_save_discard_cancel(self, question: str) -> QMessageBox.StandardButton:
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle(tr("dlg_unsaved_title"))
+        box.setText(tr("dlg_unsaved_text"))
+        box.setInformativeText(question)
+        box.setStandardButtons(
+            QMessageBox.StandardButton.Save
+            | QMessageBox.StandardButton.Discard
+            | QMessageBox.StandardButton.Cancel
+        )
+        box.setDefaultButton(QMessageBox.StandardButton.Save)
+        box.button(QMessageBox.StandardButton.Save).setText(tr("btn_save"))
+        box.button(QMessageBox.StandardButton.Discard).setText(tr("btn_discard"))
+        box.button(QMessageBox.StandardButton.Cancel).setText(tr("btn_cancel"))
+        return QMessageBox.StandardButton(box.exec())

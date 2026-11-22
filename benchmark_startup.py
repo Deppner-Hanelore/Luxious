@@ -8,7 +8,7 @@ import os
 import time
 
 print("=" * 60)
-print("LUMINATION STARTUP BENCHMARK & DIAGNOSTIC")
+print("LUXIOUS STARTUP BENCHMARK & DIAGNOSTIC")
 print("=" * 60)
 
 t0 = time.perf_counter()

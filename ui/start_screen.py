@@ -5,6 +5,8 @@ from __future__ import annotations
 from typing import Optional
 
 from PySide6.QtCore import Qt, Signal
+
+from i18n.translations import tr, TranslationManager
 from PySide6.QtWidgets import (
     QFrame,
     QLabel,
@@ -20,7 +22,6 @@ class StartScreenWidget(QWidget):
     new_survey_requested = Signal()
     open_survey_requested = Signal()
     resume_requested = Signal()
-    locate_project_requested = Signal()
     practice_requested = Signal()
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
@@ -30,11 +31,13 @@ class StartScreenWidget(QWidget):
 
         content = QFrame(self)
         content.setObjectName("startCard")
-        content.setMaximumWidth(560)
+        content.setFixedWidth(600)
 
-        title = QLabel("Room lighting survey", content)
+        title = QLabel(tr("start_title"), content)
         title.setObjectName("startTitle")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title.setWordWrap(True)
+        self.lbl_title = title
 
         self.lbl_resume_title = QLabel("", content)
         self.lbl_resume_title.setObjectName("resumeTitle")
@@ -42,31 +45,23 @@ class StartScreenWidget(QWidget):
         self.lbl_resume_detail.setWordWrap(True)
         self.lbl_resume_detail.setObjectName("resumeDetail")
 
-        self.btn_resume = QPushButton("Resume survey", content)
+        self.btn_resume = QPushButton(tr("start_resume"), content)
         self.btn_resume.setObjectName("primaryStartAction")
         self.btn_resume.setMinimumHeight(52)
         self.btn_resume.clicked.connect(self.resume_requested.emit)
 
-        self.btn_new = QPushButton("New survey", content)
+        self.btn_new = QPushButton(tr("start_new"), content)
         self.btn_new.setObjectName("primaryStartAction")
         self.btn_new.setMinimumHeight(52)
         self.btn_new.clicked.connect(self.new_survey_requested.emit)
 
-        self.btn_open = QPushButton("Open survey", content)
+        self.btn_open = QPushButton(tr("start_open"), content)
         self.btn_open.setMinimumHeight(48)
         self.btn_open.clicked.connect(self.open_survey_requested.emit)
 
-        self.btn_locate = QPushButton("Locate saved project…", content)
-        self.btn_locate.setMinimumHeight(44)
-        self.btn_locate.clicked.connect(self.locate_project_requested.emit)
-
-        self.btn_practice = QPushButton("Try a practice survey", content)
+        self.btn_practice = QPushButton(tr("start_practice"), content)
         self.btn_practice.setMinimumHeight(44)
         self.btn_practice.clicked.connect(self.practice_requested.emit)
-
-        self.lbl_missing = QLabel("", content)
-        self.lbl_missing.setWordWrap(True)
-        self.lbl_missing.setObjectName("startHint")
 
         card_layout = QVBoxLayout(content)
         card_layout.setContentsMargins(32, 28, 32, 28)
@@ -78,10 +73,8 @@ class StartScreenWidget(QWidget):
         card_layout.addWidget(self.btn_resume)
         card_layout.addWidget(self.btn_new)
         card_layout.addWidget(self.btn_open)
-        card_layout.addWidget(self.btn_locate)
         card_layout.addSpacing(8)
         card_layout.addWidget(self.btn_practice)
-        card_layout.addWidget(self.lbl_missing)
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(24, 24, 24, 24)
@@ -97,7 +90,7 @@ class StartScreenWidget(QWidget):
                 border: 1px solid #c5cdd7;
                 border-radius: 8px;
             }
-            QLabel#startTitle { color: #17212b; font-size: 20pt; font-weight: 600; }
+            QLabel#startTitle { color: #17212b; font-size: 18pt; font-weight: 600; }
             QLabel#resumeTitle { color: #17212b; font-size: 12pt; font-weight: 600; }
             QLabel#resumeDetail, QLabel#startHint { color: #52606d; font-size: 11pt; }
             QPushButton {
@@ -123,6 +116,14 @@ class StartScreenWidget(QWidget):
         )
 
         self.show_resume(None, None)
+        TranslationManager.get_instance().language_changed.connect(self.retranslate_ui)
+
+    def retranslate_ui(self, *_args) -> None:
+        self.lbl_title.setText(tr("start_title"))
+        self.btn_resume.setText(tr("start_resume"))
+        self.btn_new.setText(tr("start_new"))
+        self.btn_open.setText(tr("start_open"))
+        self.btn_practice.setText(tr("start_practice"))
 
     def show_resume(self, title: Optional[str], detail: Optional[str]) -> None:
         """Show a resume action only when a usable project or recovery exists."""
@@ -132,13 +133,3 @@ class StartScreenWidget(QWidget):
         self.lbl_resume_title.setVisible(available)
         self.lbl_resume_detail.setVisible(available)
         self.btn_resume.setVisible(available)
-
-    def show_missing_project(self, path: Optional[str]) -> None:
-        missing = bool(path)
-        self.lbl_missing.setText(
-            f"The last project could not be found: {path}. Locate it or start a new survey."
-            if missing
-            else ""
-        )
-        self.lbl_missing.setVisible(missing)
-        self.btn_locate.setVisible(missing)

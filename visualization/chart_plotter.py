@@ -16,6 +16,7 @@ from matplotlib.figure import Figure
 from models.measurement import MeasurementPoint
 from analysis.statistics import calculate_statistics
 from analysis.comparison import TargetComparisonResult, SimulatedComparisonResult
+from i18n.translations import tr
 
 
 def render_distribution_histogram(
@@ -27,7 +28,7 @@ def render_distribution_histogram(
     ax.clear()
     measured = [p for p in points if p.is_measured and p.lux is not None and p.lux >= 0]
     if not measured:
-        ax.text(0.5, 0.5, "No measured data", ha="center", va="center", color="#94a3b8")
+        ax.text(0.5, 0.5, tr("chart_no_data"), ha="center", va="center", color="#94a3b8")
         return
 
     lux_vals = np.array([p.lux for p in measured], dtype=np.float64)
@@ -49,14 +50,14 @@ def render_distribution_histogram(
             color="#2563eb",
             linestyle="--",
             linewidth=2.0,
-            label=f"Avg: {stats.e_avg:.0f} lx",
+            label=tr("chart_avg", value=f"{stats.e_avg:.0f}"),
         )
         ax.axvline(
             stats.median,
             color="#0891b2",
             linestyle=":",
             linewidth=1.8,
-            label=f"Median: {stats.median:.0f} lx",
+            label=tr("chart_median", value=f"{stats.median:.0f}"),
         )
 
     if target_lux and target_lux > 0:
@@ -65,12 +66,12 @@ def render_distribution_histogram(
             color="#dc2626",
             linestyle="-",
             linewidth=2.0,
-            label=f"Target: {target_lux:.0f} lx",
+            label=tr("chart_target", value=f"{target_lux:.0f}"),
         )
 
-    ax.set_xlabel("Illuminance (lux)", fontsize=9, fontweight="bold", color="#334155")
-    ax.set_ylabel("Count of Points", fontsize=9, fontweight="bold", color="#334155")
-    ax.set_title("Illuminance Distribution", fontsize=10, fontweight="bold", color="#0f172a")
+    ax.set_xlabel(tr("chart_x_lux"), fontsize=9, fontweight="bold", color="#334155")
+    ax.set_ylabel(tr("chart_y_count"), fontsize=9, fontweight="bold", color="#334155")
+    ax.set_title(tr("chart_distribution"), fontsize=10, fontweight="bold", color="#0f172a")
     ax.legend(fontsize=8, loc="upper right")
     ax.grid(True, linestyle=":", alpha=0.5)
 
@@ -90,7 +91,7 @@ def render_target_compliance_bar(
         color="#ef4444",
         edgecolor="#b91c1c",
         height=0.45,
-        label=f"Below Target ({pct_below:.1f}%)",
+        label=tr("chart_below", pct=f"{pct_below:.1f}"),
     )
     ax.barh(
         [0],
@@ -99,14 +100,14 @@ def render_target_compliance_bar(
         color="#22c55e",
         edgecolor="#15803d",
         height=0.45,
-        label=f"≥ Target ({pct_above:.1f}%)",
+        label=tr("chart_above", pct=f"{pct_above:.1f}"),
     )
 
     ax.set_xlim(0, 100)
     ax.set_yticks([])
-    ax.set_xlabel("Percentage of Points (%)", fontsize=9, color="#334155")
+    ax.set_xlabel(tr("chart_pct_points"), fontsize=9, color="#334155")
     ax.set_title(
-        f"Target: {comparison.target_lux:.0f} lx Compliance ({comparison.points_above_or_equal_target}/{comparison.points_evaluated} pts)",
+        tr("chart_compliance", target=f"{comparison.target_lux:.0f}", above=comparison.points_above_or_equal_target, total=comparison.points_evaluated),
         fontsize=10,
         fontweight="bold",
         color="#0f172a",

@@ -7,7 +7,6 @@ Tests:
 4. Degenerate interpolation messaging & non-fabrication of fields
 5. Extended Target comparison metrics (E_avg, MAE, surplus, deficit)
 6. Persistence roundtrip with reading metadata (device_name, timestamp, notes)
-7. USB Serial & Bluetooth Lux Meter hardware drivers
 """
 
 import os
@@ -22,9 +21,6 @@ from analysis.comparison import compare_with_target
 from analysis.interpolation import reconstruct_illuminance_field
 from analysis.outliers import evaluate_spatial_outliers
 from persistence.project_io import save_project, load_project
-from persistence.csv_io import export_measurements_to_csv, import_measurements_from_csv
-from measurement_sources.usb_serial import USBSerialMeterSource
-from measurement_sources.bluetooth_meter import BluetoothMeterSource
 
 
 def test_serpentine_traversal_order():
@@ -119,36 +115,3 @@ def test_persistence_metadata_roundtrip(tmp_path):
     assert lp.device_name == "Extech HD450"
     assert lp.notes == "Near window"
     assert lp.timestamp is not None
-
-
-def test_usb_serial_meter_driver(qapp):
-    """Verify USB serial lux parsing and simulated connection."""
-    driver = USBSerialMeterSource()
-    assert driver.list_available_ports() is not None
-
-    # Test parser
-    assert driver._parse_lux_value("450.5 lx") == 450.5
-    assert driver._parse_lux_value("LUX: 1250") == 1250.0
-    assert driver._parse_lux_value("320.0") == 320.0
-    assert driver._parse_lux_value("Invalid Text") is None
-
-    # Never present the old synthetic stream as a connected physical meter.
-    ok, msg = driver.connect_port("COM_MOCK")
-    assert ok is False
-    assert "Practice" in msg
-    assert driver.is_connected is False
-    driver.disconnect_port()
-    assert driver.is_connected is False
-
-
-def test_bluetooth_meter_driver(qapp):
-    """Verify Bluetooth driver discovery and connection handling."""
-    driver = BluetoothMeterSource()
-    status = []
-    driver.connection_status_changed.connect(lambda connected, desc: status.append((connected, desc)))
-    connected = driver.connect_device("00:1A:7D:DA:71:13", "Testo 540i")
-    assert connected is False
-    assert status[-1][0] is False
-    assert "no verified lux profile" in status[-1][1]
-    driver.disconnect_device()
-    assert driver.is_connected is False

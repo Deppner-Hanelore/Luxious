@@ -31,7 +31,7 @@ class RecoveryStore:
                 QStandardPaths.StandardLocation.AppDataLocation
             )
             if not app_data:
-                app_data = os.path.join(os.path.expanduser("~"), ".local", "share", "Lumination")
+                app_data = os.path.join(os.path.expanduser("~"), ".local", "share", "Luxious")
             path = os.path.join(app_data, "recovery.json")
         self.path = os.path.abspath(path)
 

@@ -6,7 +6,7 @@ on:
     branches: [main, 'codex/field-survey-ux']
     paths:
       - '**.py'
-      - 'Lumination.spec'
+      - 'Luxious.spec'
       - 'requirements*.txt'
       - '.github/workflows/windows-preview.yml'
 
@@ -37,14 +37,14 @@ jobs:
           LUMINATION_UI_SCREENSHOTS: build-artifacts/ui
         run: python -c "from PySide6.QtWidgets import QApplication; app = QApplication([]); import pytest; raise SystemExit(pytest.main(['-q', 'tests', '--junitxml=build-artifacts/tests.xml']))"
       - name: Build portable executable
-        run: python -m PyInstaller --noconfirm --clean Lumination.spec
+        run: python -m PyInstaller --noconfirm --clean Luxious.spec
       - name: Smoke-test the actual packaged Windows executable
         shell: pwsh
         env:
           QT_QPA_PLATFORM: windows
         run: |
           $report = Join-Path $pwd 'build-smoke.json'
-          $process = Start-Process -FilePath '.\dist\Lumination\Lumination.exe' -ArgumentList @('--smoke-test', $report) -PassThru
+          $process = Start-Process -FilePath '.\dist\Luxious\Luxious.exe' -ArgumentList @('--smoke-test', $report) -PassThru
           if (-not $process.WaitForExit(120000)) {
             $process.Kill()
             throw 'Packaged application did not complete its smoke test within two minutes.'
@@ -56,19 +56,19 @@ jobs:
       - name: Record the build and package it
         shell: pwsh
         run: |
-          "Commit: $env:GITHUB_SHA" | Out-File 'dist/Lumination/BUILD_INFO.txt' -Encoding utf8
-          python --version | Out-File 'dist/Lumination/BUILD_INFO.txt' -Append -Encoding utf8
-          python -m pip freeze | Out-File 'dist/Lumination/BUILD_INFO.txt' -Append -Encoding utf8
-          Copy-Item 'build-smoke.json' 'dist/Lumination/build-smoke.json'
+          "Commit: $env:GITHUB_SHA" | Out-File 'dist/Luxious/BUILD_INFO.txt' -Encoding utf8
+          python --version | Out-File 'dist/Luxious/BUILD_INFO.txt' -Append -Encoding utf8
+          python -m pip freeze | Out-File 'dist/Luxious/BUILD_INFO.txt' -Append -Encoding utf8
+          Copy-Item 'build-smoke.json' 'dist/Luxious/build-smoke.json'
           python package_release.py
           if ($LASTEXITCODE -ne 0) { throw 'Packaging the portable Windows archive failed.' }
-          $hash = (Get-FileHash 'release/Lumination-windows-x64.zip' -Algorithm SHA256).Hash.ToLower()
-          "$hash  Lumination-windows-x64.zip" | Out-File 'release/Lumination-windows-x64.zip.sha256' -Encoding ascii
+          $hash = (Get-FileHash 'release/Luxious-windows-x64.zip' -Algorithm SHA256).Hash.ToLower()
+          "$hash  Luxious-windows-x64.zip" | Out-File 'release/Luxious-windows-x64.zip.sha256' -Encoding ascii
       - name: Upload the portable Windows ZIP
         uses: actions/upload-artifact@v7.0.2
         with:
-          name: Lumination-windows-x64
-          path: release/Lumination-windows-x64.zip
+          name: Luxious-windows-x64
+          path: release/Luxious-windows-x64.zip
           archive: false
           retention-days: 14
           if-no-files-found: error
@@ -80,8 +80,8 @@ jobs:
           path: |
             build-artifacts/
             build-smoke.json
-            release/Lumination-windows-x64.zip.sha256
-            build/Lumination/warn-Lumination.txt
-            dist/Lumination/BUILD_INFO.txt
+            release/Luxious-windows-x64.zip.sha256
+            build/Luxious/warn-Luxious.txt
+            dist/Luxious/BUILD_INFO.txt
           retention-days: 14
           if-no-files-found: ignore

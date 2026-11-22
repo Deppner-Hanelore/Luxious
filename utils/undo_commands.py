@@ -260,3 +260,37 @@ class ClearMeasurementsCommand(QUndoCommand):
 
     def undo(self) -> None:
         self._apply(self.before)
+
+
+class SetComparisonCommand(QUndoCommand):
+    """Load (or replace) the compared file's values; undo restores the previous comparison."""
+
+    workflow_operation = "change_display"
+
+    def __init__(
+        self,
+        project: LuminationProject,
+        replacement: LuminationProject,
+        text: str = "Compare with file",
+        callback: Optional[Callable[[], None]] = None,
+    ) -> None:
+        super().__init__(text)
+        self.project = project
+        self.callback = callback
+        self.before = ({p.id: p.expected_lux for p in project.points}, project.comparison_file)
+        self.after = ({p.id: p.expected_lux for p in replacement.points}, replacement.comparison_file)
+
+    def _apply(self, state) -> None:
+        values, name = state
+        for point in self.project.points:
+            point.expected_lux = values.get(point.id)
+        self.project.comparison_file = name
+        self.project.mark_modified()
+        if self.callback:
+            self.callback()
+
+    def redo(self) -> None:
+        self._apply(self.after)
+
+    def undo(self) -> None:
+        self._apply(self.before)

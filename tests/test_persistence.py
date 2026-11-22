@@ -10,7 +10,8 @@ from models.project import LuminationProject
 from models.measurement import MeasurementPoint
 from persistence.project_io import save_project, load_project
 from persistence.recovery import RecoveryStore
-from persistence.csv_io import export_measurements_to_csv, import_measurements_from_csv
+from persistence.csv_io import export_measurements_to_csv
+from persistence.table_io import apply_table_to_project, read_table
 from reporting.pdf_report import generate_pdf_report
 from reporting.chart_exporter import export_room_map_image
 
@@ -148,9 +149,9 @@ def test_csv_export_and_import(tmp_path):
     new_project = LuminationProject(name="Imported", room=Room(length=6.0, width=4.0))
     new_project.regenerate_grid(rows=2, cols=2)
 
-    # Import
-    updated, created = import_measurements_from_csv(new_project, file_path)
-    assert updated == 4
+    # Import (grid layout: one cell per point, A1 = top-left)
+    updated = apply_table_to_project(new_project, read_table(file_path))
+    assert updated == 3
     assert new_project.points[0].lux == 312.0
     assert new_project.points[1].lux == 347.0
     assert new_project.points[2].lux == 405.0

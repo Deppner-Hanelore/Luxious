@@ -1,141 +1,152 @@
-"""Simulated / DIALux Reference Comparison Panel.
+"""Comparison panel: compare the survey with another Luxious project, Excel or CSV grid.
 
-Compares physical lux meter measurements with simulated lighting calculations (e.g. DIALux),
-calculates Delta E and percentage difference metrics, and controls map display modes.
+The compared file can be an earlier survey of the same room or a similar room.
+Points are matched by grid position; the panel shows averages, the difference
+and the depreciation of the light, and controls which map is shown.
 """
 
 from __future__ import annotations
+
 from typing import Optional
-from PySide6.QtCore import Qt, Signal
+
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
-    QWidget,
-    QVBoxLayout,
-    QHBoxLayout,
-    QLabel,
-    QComboBox,
+    QButtonGroup,
     QGroupBox,
+    QLabel,
     QPushButton,
     QRadioButton,
-    QButtonGroup,
+    QVBoxLayout,
+    QWidget,
 )
 
+from analysis.comparison import compare_with_file
+from i18n.translations import TranslationManager, tr
 from models.project import LuminationProject
-from analysis.comparison import SimulatedComparisonResult, compare_measured_with_simulated
 
 
 class ComparisonPanel(QWidget):
-    """Panel for comparing measured illuminance against simulated/DIALux models.
+    """Load a file to compare with, show the results and choose the map view.
 
     Signals:
-        display_mode_changed (str): "measured", "expected", or "difference".
+        display_mode_changed (str): "measured", "expected" (compared file) or "difference".
+        compare_requested (): the user wants to pick a file to compare with.
     """
+
     display_mode_changed = Signal(str)
+    compare_requested = Signal()
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
-
         self.project: Optional[LuminationProject] = None
 
-        # Map Mode Selection
-        mode_group = QGroupBox("Illuminance Map Display Mode", self)
-        m_layout = QVBoxLayout(mode_group)
-        m_layout.setSpacing(6)
+        self.file_group = QGroupBox(self)
+        file_layout = QVBoxLayout(self.file_group)
+        self.btn_compare = QPushButton(self)
+        self.btn_compare.setMinimumHeight(40)
+        self.btn_compare.clicked.connect(self.compare_requested.emit)
+        self.lbl_file = QLabel(self)
+        self.lbl_file.setWordWrap(True)
+        file_layout.addWidget(self.btn_compare)
+        file_layout.addWidget(self.lbl_file)
 
+        self.mode_group = QGroupBox(self)
+        mode_layout = QVBoxLayout(self.mode_group)
         self.btn_group = QButtonGroup(self)
-        self.rb_measured = QRadioButton("Physical Measured Map", self)
-        self.rb_expected = QRadioButton("Simulated / DIALux Expected Map", self)
-        self.rb_difference = QRadioButton("Difference Map (Δ E = Measured − Expected)", self)
-
+        self.rb_measured = QRadioButton(self)
+        self.rb_expected = QRadioButton(self)
+        self.rb_difference = QRadioButton(self)
         self.rb_measured.setChecked(True)
-        self.btn_group.addButton(self.rb_measured, 0)
-        self.btn_group.addButton(self.rb_expected, 1)
-        self.btn_group.addButton(self.rb_difference, 2)
-
+        for index, button in enumerate((self.rb_measured, self.rb_expected, self.rb_difference)):
+            self.btn_group.addButton(button, index)
+            mode_layout.addWidget(button)
         self.btn_group.idClicked.connect(self._on_mode_radio_clicked)
 
-        m_layout.addWidget(self.rb_measured)
-        m_layout.addWidget(self.rb_expected)
-        m_layout.addWidget(self.rb_difference)
-
-        # Numerical Comparison Group
-        comp_group = QGroupBox("Measured vs. Simulated Analytics", self)
-        c_layout = QVBoxLayout(comp_group)
-        c_layout.setSpacing(5)
-
-        self.lbl_points_both = QLabel("Points Compared: 0", self)
-        self.lbl_mean_delta = QLabel("Mean Delta (Δ E): -", self)
-        self.lbl_mae = QLabel("Mean Absolute Error (MAE): -", self)
-        self.lbl_rmse = QLabel("Root Mean Squared Error (RMSE): -", self)
-        self.lbl_mape = QLabel("Mean Percentage Error: -", self)
-
-        c_layout.addWidget(self.lbl_points_both)
-        c_layout.addWidget(self.lbl_mean_delta)
-        c_layout.addWidget(self.lbl_mae)
-        c_layout.addWidget(self.lbl_rmse)
-        c_layout.addWidget(self.lbl_mape)
+        self.results_group = QGroupBox(self)
+        results_layout = QVBoxLayout(self.results_group)
+        self.lbl_points = QLabel(self)
+        self.lbl_compared_avg = QLabel(self)
+        self.lbl_current_avg = QLabel(self)
+        self.lbl_difference = QLabel(self)
+        self.lbl_depreciation = QLabel(self)
+        self.lbl_depreciation.setWordWrap(True)
+        for label in (self.lbl_points, self.lbl_compared_avg, self.lbl_current_avg,
+                      self.lbl_difference, self.lbl_depreciation):
+            results_layout.addWidget(label)
 
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(8, 8, 8, 8)
-        main_layout.addWidget(mode_group)
-        main_layout.addWidget(comp_group)
+        main_layout.addWidget(self.file_group)
+        main_layout.addWidget(self.mode_group)
+        main_layout.addWidget(self.results_group)
         main_layout.addStretch()
 
+        self.retranslate_ui()
+        TranslationManager.get_instance().language_changed.connect(self.retranslate_ui)
+
+    def retranslate_ui(self, *_args) -> None:
+        self.file_group.setTitle(tr("cmp_file_group"))
+        self.btn_compare.setText(tr("cmp_btn_compare"))
+        self.mode_group.setTitle(tr("cmp_mode_group"))
+        self.rb_measured.setText(tr("cmp_rb_measured"))
+        self.rb_expected.setText(tr("cmp_rb_expected"))
+        self.rb_difference.setText(tr("cmp_rb_difference"))
+        self.results_group.setTitle(tr("cmp_results_group"))
+        self.update_analysis()
+
     def set_project(self, project: LuminationProject) -> None:
-        """Set project reference and update widgets."""
         self.project = project
         mode = project.visualization_settings.display_mode
         self.btn_group.blockSignals(True)
-        if mode == "expected":
-            self.rb_expected.setChecked(True)
-        elif mode == "difference":
-            self.rb_difference.setChecked(True)
-        else:
-            self.rb_measured.setChecked(True)
+        {"expected": self.rb_expected, "difference": self.rb_difference}.get(mode, self.rb_measured).setChecked(True)
         self.btn_group.blockSignals(False)
         self.update_analysis()
 
     def set_display_mode(self, mode: str) -> None:
-        """Set active map display mode and update project."""
-        if mode == "expected":
-            self.rb_expected.setChecked(True)
-        elif mode == "difference":
-            self.rb_difference.setChecked(True)
-        else:
+        if mode not in ("expected", "difference"):
             mode = "measured"
-            self.rb_measured.setChecked(True)
-
+        {"expected": self.rb_expected, "difference": self.rb_difference}.get(mode, self.rb_measured).setChecked(True)
         if self.project:
             self.project.visualization_settings.display_mode = mode
             self.project.mark_modified()
-
         self.display_mode_changed.emit(mode)
 
     def update_analysis(self) -> None:
-        """Recalculate simulated vs measured metrics."""
-        if not self.project:
-            return
+        name = self.project.comparison_file if self.project else None
+        has_values = bool(self.project and any(p.expected_lux is not None for p in self.project.points))
+        if name:
+            self.lbl_file.setText(tr("cmp_file_name", name=name))
+        elif has_values:
+            self.lbl_file.setText(tr("cmp_file_unnamed"))
+        else:
+            self.lbl_file.setText(tr("cmp_no_file"))
+        for button in (self.rb_expected, self.rb_difference):
+            button.setEnabled(has_values)
+        if not has_values and self.project and self.project.visualization_settings.display_mode != "measured":
+            self.project.visualization_settings.display_mode = "measured"
+            self.btn_group.blockSignals(True)
+            self.rb_measured.setChecked(True)
+            self.btn_group.blockSignals(False)
 
-        res = compare_measured_with_simulated(self.project.points)
-        if res is None:
-            self.lbl_points_both.setText("Points with Expected Values: <b>0</b>")
-            self.lbl_mean_delta.setText("Mean Delta (Δ E): -")
-            self.lbl_mae.setText("Mean Absolute Error (MAE): -")
-            self.lbl_rmse.setText("Root Mean Squared Error (RMSE): -")
-            self.lbl_mape.setText("Mean Percentage Error: -")
+        result = compare_with_file(self.project.points) if self.project else None
+        if result is None:
+            self.lbl_points.setText(tr("cmp_points", value="-"))
+            self.lbl_compared_avg.setText(tr("cmp_compared_avg", value="-"))
+            self.lbl_current_avg.setText(tr("cmp_current_avg", value="-"))
+            self.lbl_difference.setText(tr("cmp_difference", value="-"))
+            self.lbl_depreciation.setText(tr("cmp_depreciation", value="-"))
             return
-
-        self.lbl_points_both.setText(f"Points Compared: <b>{res.points_evaluated}</b>")
-        self.lbl_mean_delta.setText(f"Mean Delta (Δ E): <b>{res.mean_delta:+.1f} lx</b> (Avg Meas: {res.avg_measured:.0f} vs Exp: {res.avg_expected:.0f})")
-        self.lbl_mae.setText(f"Mean Absolute Error (MAE): <b>{res.mean_absolute_error:.1f} lx</b>")
-        self.lbl_rmse.setText(f"RMSE: <b>{res.root_mean_squared_error:.1f} lx</b>")
-        self.lbl_mape.setText(f"Mean Percentage Error: <b>{res.mean_percentage_diff:.1f}%</b> (Max Δ: {res.max_absolute_delta:.1f} lx)")
+        self.lbl_points.setText(tr("cmp_points", value=result.points_compared))
+        self.lbl_compared_avg.setText(tr("cmp_compared_avg", value=f"{result.compared_avg:.1f} lx"))
+        self.lbl_current_avg.setText(tr("cmp_current_avg", value=f"{result.current_avg:.1f} lx"))
+        self.lbl_difference.setText(tr(
+            "cmp_difference",
+            value=f"{result.difference_lux:+.1f} lx ({result.difference_pct:+.1f}%)",
+        ))
+        if result.has_depreciation:
+            self.lbl_depreciation.setText(tr("cmp_depreciation", value=f"{result.depreciation_pct:.1f}%"))
+        else:
+            self.lbl_depreciation.setText(tr("cmp_no_depreciation", pct=f"{result.difference_pct:.1f}"))
 
     def _on_mode_radio_clicked(self, id_val: int) -> None:
-        if id_val == 1:
-            mode = "expected"
-        elif id_val == 2:
-            mode = "difference"
-        else:
-            mode = "measured"
-
-        self.set_display_mode(mode)
+        self.set_display_mode({1: "expected", 2: "difference"}.get(id_val, "measured"))
