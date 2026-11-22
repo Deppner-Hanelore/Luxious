@@ -38,50 +38,47 @@ class LayerControlWidget(QWidget):
         self._block_signals = False
 
         # Layer Toggles Group
-        self.layer_group = QGroupBox("Map Display Layers", self)
+        self.layer_group = QGroupBox(tr("layers_group"), self)
         l_layout = QVBoxLayout(self.layer_group)
         l_layout.setSpacing(4)
 
-        self.chk_heatmap = QCheckBox("False-Colour Heatmap", self)
-        self.chk_contours = QCheckBox("Isolux Contour Lines", self)
-        self.chk_points = QCheckBox("Measurement Points", self)
-        self.chk_values = QCheckBox("Permanent Lux Labels", self)
-        self.chk_grid = QCheckBox("Meter Coordinate Grid", self)
-        self.chk_margins = QCheckBox("Wall Margin Band", self)
+        self.chk_heatmap = QCheckBox(tr("layers_heatmap"), self)
+        self.chk_contours = QCheckBox(tr("layers_contours"), self)
+        self.chk_points = QCheckBox(tr("layers_points"), self)
+        self.chk_values = QCheckBox(tr("layers_values"), self)
+        self.chk_grid = QCheckBox(tr("layers_grid"), self)
 
         self.chk_values.setChecked(False)  # Off by default for clean map
-        for chk in (self.chk_heatmap, self.chk_contours, self.chk_points, self.chk_grid, self.chk_margins):
+        for chk in (self.chk_heatmap, self.chk_contours, self.chk_points, self.chk_grid):
             chk.setChecked(True)
 
-        for chk in (self.chk_heatmap, self.chk_contours, self.chk_points, self.chk_values, self.chk_grid, self.chk_margins):
+        for chk in (self.chk_heatmap, self.chk_contours, self.chk_points, self.chk_values, self.chk_grid):
             chk.toggled.connect(self._on_layer_toggled)
             l_layout.addWidget(chk)
 
         # Scientific Options Group
-        self.sci_group = QGroupBox("Scientific Map Options", self)
+        self.sci_group = QGroupBox(tr("layers_sci_group"), self)
         s_layout = QVBoxLayout(self.sci_group)
         s_layout.setSpacing(4)
 
         # Interpolation Method
-        self.lbl_interp = QLabel("Interpolation Method:", self)
+        self.lbl_interp = QLabel(tr("layers_interp"), self)
         self.lbl_interp.setStyleSheet("font-weight: 600; font-size: 11px;")
         self.combo_interp = QComboBox(self)
-        self.combo_interp.addItem("Linear (Standard & Default)", "linear")
-        self.combo_interp.addItem("Cubic Spline (Smooth)", "cubic")
-        self.combo_interp.addItem("Thin-Plate RBF (Physical)", "rbf")
-        self.combo_interp.addItem("Nearest Neighbour (Discrete)", "nearest")
+        for method in ("linear", "cubic", "rbf", "nearest"):
+            self.combo_interp.addItem(tr(f"layers_interp_{method}"), method)
         self.combo_interp.currentIndexChanged.connect(self._on_interp_changed)
 
         # Colormap
-        self.lbl_cmap = QLabel("Colour Palette:", self)
+        self.lbl_cmap = QLabel(tr("layers_cmap"), self)
         self.lbl_cmap.setStyleSheet("font-weight: 600; font-size: 11px;")
         self.combo_cmap = QComboBox(self)
-        for key, name in AVAILABLE_COLORMAPS.items():
-            self.combo_cmap.addItem(name, key)
+        for key in AVAILABLE_COLORMAPS:
+            self.combo_cmap.addItem(tr(f"cmap_{key}"), key)
         self.combo_cmap.currentIndexChanged.connect(self._on_cmap_changed)
 
         # Contour Interval
-        self.lbl_contour = QLabel("Contour Step Interval (lx):", self)
+        self.lbl_contour = QLabel(tr("layers_contour_step"), self)
         self.lbl_contour.setStyleSheet("font-weight: 600; font-size: 11px;")
         self.spin_contour = QDoubleSpinBox(self)
         self.spin_contour.setRange(5, 5000)
@@ -106,15 +103,22 @@ class LayerControlWidget(QWidget):
 
         TranslationManager.get_instance().language_changed.connect(self.retranslate_ui)
 
-    def retranslate_ui(self) -> None:
+    def retranslate_ui(self, *_args) -> None:
         """Update strings on language change."""
-        self.layer_group.setTitle(tr("tab_layers"))
-        self.chk_heatmap.setText("False-Colour Heatmap" if tr("menu_file") == "File" else ("Hartă culori false" if tr("menu_file") == "Fișier" else "Falschfarben-Heatmap"))
-        self.chk_contours.setText("Isolux Contour Lines" if tr("menu_file") == "File" else ("Linii de contur isolux" if tr("menu_file") == "Fișier" else "Isolux-Höhenlinien"))
-        self.chk_points.setText("Measurement Points" if tr("menu_file") == "File" else ("Puncte de măsurare" if tr("menu_file") == "Fișier" else "Messpunkte"))
-        self.chk_values.setText("Permanent Lux Labels" if tr("menu_file") == "File" else ("Etichete permanente lux" if tr("menu_file") == "Fișier" else "Permanente Lux-Werte"))
-        self.chk_grid.setText("Meter Coordinate Grid" if tr("menu_file") == "File" else ("Grilă coordonate metri" if tr("menu_file") == "Fișier" else "Meter-Koordinatengitter"))
-        self.chk_margins.setText("Wall Margin Band" if tr("menu_file") == "File" else ("Bandă margine perete" if tr("menu_file") == "Fișier" else "Wandabstand"))
+        self.layer_group.setTitle(tr("layers_group"))
+        self.chk_heatmap.setText(tr("layers_heatmap"))
+        self.chk_contours.setText(tr("layers_contours"))
+        self.chk_points.setText(tr("layers_points"))
+        self.chk_values.setText(tr("layers_values"))
+        self.chk_grid.setText(tr("layers_grid"))
+        self.sci_group.setTitle(tr("layers_sci_group"))
+        self.lbl_interp.setText(tr("layers_interp"))
+        self.lbl_cmap.setText(tr("layers_cmap"))
+        self.lbl_contour.setText(tr("layers_contour_step"))
+        for index in range(self.combo_interp.count()):
+            self.combo_interp.setItemText(index, tr(f"layers_interp_{self.combo_interp.itemData(index)}"))
+        for index in range(self.combo_cmap.count()):
+            self.combo_cmap.setItemText(index, tr(f"cmap_{self.combo_cmap.itemData(index)}"))
 
     def set_project(self, project: LuminationProject) -> None:
         """Bind project visualization settings to UI controls."""
@@ -128,7 +132,6 @@ class LayerControlWidget(QWidget):
             self.chk_points.setChecked(s.show_points)
             self.chk_values.setChecked(s.show_values)
             self.chk_grid.setChecked(s.show_grid)
-            self.chk_margins.setChecked(s.show_wall_margins)
 
             idx = self.combo_interp.findData(s.interpolation_method)
             if idx >= 0:
@@ -151,7 +154,6 @@ class LayerControlWidget(QWidget):
         s.show_points = self.chk_points.isChecked()
         s.show_values = self.chk_values.isChecked()
         s.show_grid = self.chk_grid.isChecked()
-        s.show_wall_margins = self.chk_margins.isChecked()
         self.settings_changed.emit()
 
     def _on_interp_changed(self) -> None:

@@ -1,4 +1,4 @@
-"""Lumination Desktop Application Entry Point.
+"""Luxious Desktop Application Entry Point.
 
 Starts the PySide6 application event loop, applies visual styling,
 configures global crash logging, and displays the primary survey window.
@@ -35,6 +35,7 @@ from PySide6.QtCore import Qt, QTimer
 log_startup("PySide6 imported")
 
 from ui.main_window import MainWindow
+from utils.app_info import APP_NAME, ORGANIZATION_NAME, LEGACY_APP_NAME, LEGACY_ORGANIZATION_NAME
 from ui.styles import MAIN_STYLESHEET
 log_startup("Application modules imported")
 
@@ -48,9 +49,9 @@ def setup_crash_logger() -> None:
 
         # Determine log file location in local AppData or next to exe
         appdata = os.environ.get("LOCALAPPDATA", os.path.expanduser("~"))
-        log_dir = os.path.join(appdata, "Lumination")
+        log_dir = os.path.join(appdata, APP_NAME)
         os.makedirs(log_dir, exist_ok=True)
-        log_path = os.path.join(log_dir, "lumination_crash.log")
+        log_path = os.path.join(log_dir, "luxious_crash.log")
 
         err_msg = "".join(traceback.format_exception(exc_type, exc_value, exc_traceback))
         timestamp = datetime.now().isoformat()
@@ -67,9 +68,10 @@ def setup_crash_logger() -> None:
             if app:
                 msg = QMessageBox()
                 msg.setIcon(QMessageBox.Icon.Critical)
-                msg.setWindowTitle("Lumination - Application Error")
-                msg.setText("An unexpected error occurred in Lumination.")
-                msg.setInformativeText(f"A detailed crash report has been saved to:\n{log_path}\n\nError: {exc_value}")
+                from i18n.translations import tr
+                msg.setWindowTitle(f"{APP_NAME} - {tr('crash_title')}")
+                msg.setText(tr("crash_text", app=APP_NAME))
+                msg.setInformativeText(tr("crash_info", path=log_path, error=exc_value))
                 msg.setDetailedText(err_msg)
                 msg.exec()
         except Exception:
@@ -80,8 +82,88 @@ def setup_crash_logger() -> None:
     sys.excepthook = _unhandled_exception_hook
 
 
+_qt_translators = []
+
+# Qt texts shown in this app (dock buttons, tab scroll buttons, text-field menus) mapped to
+# our own catalog, used when Qt ships no translation file for the language (Romanian).
+_QT_TEXT_KEYS = {
+    "Close": "qt_close",
+    "Float": "qt_float",
+    "Scroll Left": "qt_scroll_left",
+    "Scroll Right": "qt_scroll_right",
+    "&Undo": "qt_undo",
+    "&Redo": "qt_redo",
+    "Cu&t": "qt_cut",
+    "&Copy": "qt_copy",
+    "&Paste": "qt_paste",
+    "Delete": "qt_delete",
+    "Select All": "qt_select_all",
+    "&Step up": "qt_step_up",
+    "Step &down": "qt_step_down",
+}
+
+
+def _install_qt_translator(app, language: str) -> None:
+    """Translate Qt's own texts: Qt's translation file when one exists, our catalog otherwise."""
+    from PySide6.QtCore import QLibraryInfo, QLocale, QTranslator
+    from i18n.translations import tr
+
+    for old in _qt_translators:
+        app.removeTranslator(old)
+    _qt_translators.clear()
+    if language == "en":
+        return
+
+    class _CatalogTranslator(QTranslator):
+        def translate(self, context, source_text, disambiguation=None, n=-1):
+            key = _QT_TEXT_KEYS.get(source_text)
+            return tr(key, language) if key else ""
+
+        def isEmpty(self) -> bool:
+            return False
+
+    fallback = _CatalogTranslator(app)
+    app.installTranslator(fallback)
+    _qt_translators.append(fallback)
+    official = QTranslator(app)
+    path = QLibraryInfo.path(QLibraryInfo.LibraryPath.TranslationsPath)
+    if official.load(QLocale(language), "qtbase", "_", path):
+        app.installTranslator(official)  # installed last, so it is asked first
+        _qt_translators.append(official)
+
+
+def _carry_over_legacy_settings(settings=None, legacy=None) -> None:
+    """Copy settings and the recovery copy saved under the former name "Lumination" (once)."""
+    import shutil
+    from PySide6.QtCore import QSettings, QStandardPaths
+
+    settings = settings if settings is not None else QSettings()
+    if settings.value("migrated_from_lumination", False, type=bool):
+        return
+    legacy = legacy if legacy is not None else QSettings(LEGACY_ORGANIZATION_NAME, LEGACY_APP_NAME)
+    for key in legacy.allKeys():
+        if not settings.contains(key):
+            settings.setValue(key, legacy.value(key))
+    settings.setValue("migrated_from_lumination", True)
+    settings.sync()
+
+    new_dir = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppDataLocation)
+    if not new_dir:
+        return
+    # AppDataLocation is <base>/<organization>/<application>.
+    base = os.path.dirname(os.path.dirname(new_dir))
+    old_recovery = os.path.join(base, LEGACY_ORGANIZATION_NAME, LEGACY_APP_NAME, "recovery.json")
+    new_recovery = os.path.join(new_dir, "recovery.json")
+    try:
+        if os.path.isfile(old_recovery) and not os.path.exists(new_recovery):
+            os.makedirs(new_dir, exist_ok=True)
+            shutil.copy2(old_recovery, new_recovery)
+    except OSError:
+        pass
+
+
 def main() -> int:
-    """Launch Lumination Desktop Application."""
+    """Launch the Luxious desktop application."""
     setup_crash_logger()
     log_startup("main() entered")
 
@@ -91,10 +173,23 @@ def main() -> int:
     )
 
     app = QApplication(sys.argv)
-    app.setApplicationName("Lumination")
-    app.setOrganizationName("Lumination Photometrics")
+    app.setApplicationName(APP_NAME)
+    app.setOrganizationName(ORGANIZATION_NAME)
+    _carry_over_legacy_settings()
     app.setStyleSheet(MAIN_STYLESHEET)
+    # Window and taskbar icon; inside the packaged exe the files live in PyInstaller's folder.
+    icon_path = os.path.join(getattr(sys, "_MEIPASS", ROOT_DIR), "assets", "luxious.ico")
+    if os.path.isfile(icon_path):
+        from PySide6.QtGui import QIcon
+        app.setWindowIcon(QIcon(icon_path))
     log_startup("QApplication created and styled")
+
+    # Start in the language chosen in the previous session, before any window exists.
+    from i18n.translations import TranslationManager
+    manager = TranslationManager.get_instance()
+    manager.load_saved_language()
+    _install_qt_translator(app, manager.current_language)
+    manager.language_changed.connect(lambda code: _install_qt_translator(app, code))
 
     log_startup("Creating MainWindow")
     window = MainWindow()

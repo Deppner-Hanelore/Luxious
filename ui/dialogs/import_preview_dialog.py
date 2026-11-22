@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
 )
 
 from models.project import LuminationProject
+from i18n.translations import tr
 
 
 class ImportPreviewDialog(QDialog):
@@ -28,16 +29,13 @@ class ImportPreviewDialog(QDialog):
         parent: Optional[QDialog] = None,
     ) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Review imported readings")
+        self.setWindowTitle(tr("preview_title"))
         self.setMinimumSize(640, 420)
 
-        summary = QLabel(
-            f"Preview: {updated_count} existing points updated; "
-            f"{created_count} points added. Cancel leaves this survey unchanged."
-        )
+        summary = QLabel(tr("preview_summary", updated=updated_count, created=created_count))
         summary.setWordWrap(True)
         self.table = QTableWidget(len(project.points), 5, self)
-        self.table.setHorizontalHeaderLabels(["Point", "X (m)", "Y (m)", "Measured (lx)", "Expected (lx)"])
+        self.table.setHorizontalHeaderLabels([tr("preview_col_point"), tr("col_x"), tr("col_y"), tr("col_lux"), tr("col_expected")])
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.setAlternatingRowColors(True)
@@ -47,8 +45,8 @@ class ImportPreviewDialog(QDialog):
                 point.id,
                 f"{point.x:g}",
                 f"{point.y:g}",
-                "Pending" if point.lux is None else f"{point.lux:g}",
-                "—" if point.expected_lux is None else f"{point.expected_lux:g}",
+                tr("preview_pending") if point.lux is None else f"{point.lux:g}",
+                "-" if point.expected_lux is None else f"{point.expected_lux:g}",
             )
             for col, value in enumerate(values):
                 item = QTableWidgetItem(value)
@@ -59,7 +57,8 @@ class ImportPreviewDialog(QDialog):
             QDialogButtonBox.StandardButton.Cancel | QDialogButtonBox.StandardButton.Ok,
             self,
         )
-        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Apply import")
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText(tr("preview_apply"))
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText(tr("btn_cancel"))
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout = QVBoxLayout(self)

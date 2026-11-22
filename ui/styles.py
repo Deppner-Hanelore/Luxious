@@ -231,6 +231,21 @@ QCheckBox::indicator:checked {
     border-color: #1d4ed8;
 }
 
+/* Radio buttons are round and filled when selected (they used to look unselected). */
+QRadioButton::indicator {
+    border-radius: 8px;
+}
+
+QRadioButton::indicator:checked {
+    background-color: #2563eb;
+    border: 4px solid #dbeafe;
+}
+
+QRadioButton::indicator:disabled, QCheckBox::indicator:disabled {
+    background-color: #f1f5f9;
+    border-color: #e2e8f0;
+}
+
 /* Tab Widget */
 QTabWidget::pane {
     border: 1px solid #e2e8f0;

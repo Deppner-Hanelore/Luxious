@@ -11,6 +11,7 @@ from typing import List, Optional, Tuple, Sequence, Dict, Any
 import numpy as np
 
 from models.measurement import MeasurementPoint
+from i18n.translations import tr
 
 
 @dataclass
@@ -141,10 +142,7 @@ def compare_with_target(
     worst_idx = int(np.argmin(deviations))
     worst_pt = measured[worst_idx]
 
-    summary = (
-        f"Target entered by user: {target_lux:.0f} lx. "
-        f"{below} of {n} measurement points are below the selected target ({pct_below:.1f}%)."
-    )
+    summary = tr("target_summary", target=f"{target_lux:.0f}", below=below, total=n, pct=f"{pct_below:.1f}")
 
     return TargetComparisonResult(
         target_lux=target_lux,
@@ -220,4 +218,47 @@ def compare_measured_with_simulated(
         mean_percentage_diff=mape,
         max_absolute_delta=max_abs_delta,
         point_deltas=point_deltas,
+    )
+
+
+@dataclass
+class FileComparisonResult:
+    """Your survey compared point by point with another survey or table of the same grid."""
+
+    points_compared: int
+    compared_avg: float
+    current_avg: float
+    difference_lux: float        # current - compared (average)
+    difference_pct: float        # difference relative to the compared file
+    depreciation_pct: float      # (compared - current) / compared * 100; 0 when the light did not drop
+    has_depreciation: bool       # False when the survey is equal to or brighter than the compared file
+
+
+def compare_with_file(points: Sequence[MeasurementPoint]) -> Optional[FileComparisonResult]:
+    """Compare readings with the compared-file values stored on the same points.
+
+    Only points with a reading in both are used; nothing is estimated.
+    """
+    pairs = [
+        (float(p.lux), float(p.expected_lux))
+        for p in points
+        if p.is_measured and p.lux is not None and p.expected_lux is not None
+    ]
+    if not pairs:
+        return None
+    current_avg = float(np.mean([current for current, _ in pairs]))
+    compared_avg = float(np.mean([compared for _, compared in pairs]))
+    difference = current_avg - compared_avg
+    if compared_avg <= 0:
+        return None
+    difference_pct = difference / compared_avg * 100.0
+    has_depreciation = difference < 0
+    return FileComparisonResult(
+        points_compared=len(pairs),
+        compared_avg=compared_avg,
+        current_avg=current_avg,
+        difference_lux=difference,
+        difference_pct=difference_pct,
+        depreciation_pct=-difference_pct if has_depreciation else 0.0,
+        has_depreciation=has_depreciation,
     )

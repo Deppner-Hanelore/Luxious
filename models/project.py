@@ -10,6 +10,8 @@ from datetime import datetime
 from typing import List, Optional, Dict, Any, Tuple
 import math
 
+from i18n.translations import tr
+from utils.app_info import APP_NAME
 from models.room import Room
 from models.measurement import MeasurementPoint
 
@@ -91,6 +93,8 @@ class LuminationProject:
     is_dirty: bool = False
     resume_state: Optional[Dict[str, Any]] = None
     is_practice: bool = False
+    language: Optional[str] = None  # interface language the project was last saved in
+    comparison_file: Optional[str] = None  # name of the file the survey was compared with
 
     def mark_modified(self) -> None:
         """Mark project as containing unsaved changes and update timestamp."""
@@ -134,7 +138,7 @@ class LuminationProject:
     ) -> MeasurementPoint:
         """Add a custom user-placed measurement point with unlocked coordinates."""
         if not self.room.is_inside(x, y):
-            raise ValueError(f"Point coordinates ({x:.2f}, {y:.2f}) are outside room boundaries (0..{self.room.length}, 0..{self.room.width}).")
+            raise ValueError(tr("err_point_outside_room", x=f"{x:.2f}", y=f"{y:.2f}", length=self.room.length, width=self.room.width))
 
         if not point_id:
             # Generate next available ID
@@ -180,7 +184,7 @@ class LuminationProject:
         spacing_x: Optional[float] = None,
         spacing_y: Optional[float] = None,
         wall_margin: Optional[float] = None,
-        centered_in_cells: bool = True,
+        centered_in_cells: bool = False,
         preserve_existing_readings: bool = False,
         preserve_existing: bool = False,
         traversal_order: Optional[str] = None,
@@ -220,6 +224,8 @@ class LuminationProject:
             "description": self.description,
             "author": self.author,
             "is_practice": self.is_practice,
+            "language": self.language,
+            "comparison_file": self.comparison_file,
             "created_at": self.created_at,
             "modified_at": self.modified_at,
             "target_lux": self.target_lux,
@@ -251,12 +257,9 @@ class LuminationProject:
         try:
             major_version = int(format_version.split(".", 1)[0])
         except (TypeError, ValueError) as exc:
-            raise ValueError(f"Unsupported project format version: {format_version}") from exc
+            raise ValueError(tr("err_format_unsupported", version=format_version)) from exc
         if major_version > 1:
-            raise ValueError(
-                f"Project format {format_version} is newer than this version of Luxious supports. "
-                "Update Luxious to open this file."
-            )
+            raise ValueError(tr("err_format_newer", version=format_version, app=APP_NAME))
 
         room = Room.from_dict(data["room"])
         points = [MeasurementPoint.from_dict(p) for p in data.get("points", [])]
@@ -284,6 +287,8 @@ class LuminationProject:
             description=str(data.get("description", "")),
             author=str(data.get("author", "")),
             is_practice=bool(data.get("is_practice", False)),
+            language=data.get("language") if data.get("language") in ("en", "ro", "de") else None,
+            comparison_file=str(data["comparison_file"]) if data.get("comparison_file") else None,
             created_at=str(data.get("created_at", datetime.now().isoformat())),
             modified_at=str(data.get("modified_at", datetime.now().isoformat())),
             target_lux=float(data["target_lux"]) if data.get("target_lux") is not None else None,

@@ -10,6 +10,7 @@ import os
 import tempfile
 from typing import Dict, Any
 
+from i18n.translations import tr
 from models.project import LuminationProject
 
 
@@ -61,7 +62,7 @@ def _atomic_write_json(file_path: str, data: Dict[str, Any]) -> None:
 def load_project(file_path: str) -> LuminationProject:
     """Load Lumination project from a JSON file."""
     if not os.path.isfile(file_path):
-        raise FileNotFoundError(f"Project file not found: {file_path}")
+        raise FileNotFoundError(tr("err_project_not_found", path=file_path))
 
     with open(file_path, "r", encoding="utf-8") as f:
         data = json.load(f)

@@ -33,7 +33,7 @@ def run_smoke_test(app: QApplication, window: MainWindow, report_path: str) -> i
             from reporting.chart_exporter import export_room_map_image
             from reporting.pdf_report import generate_pdf_report
 
-            with TemporaryDirectory(prefix="lumination-build-check-") as temporary:
+            with TemporaryDirectory(prefix="luxious-build-check-") as temporary:
                 root = Path(temporary)
                 window.recovery_store = RecoveryStore(str(root / "recovery.json"))
                 window.settings = QSettings(str(root / "settings.ini"), QSettings.Format.IniFormat)
@@ -69,6 +69,30 @@ def run_smoke_test(app: QApplication, window: MainWindow, report_path: str) -> i
                     if (root / filename).stat().st_size == 0:
                         raise RuntimeError(f"Empty export: {filename}")
                 checks.append("CSV, PDF, and PNG exports")
+
+                # Grid tables (Excel and CSV) are read back exactly as written.
+                from persistence.comparison_io import apply_comparison
+                from persistence.table_io import project_from_table, read_table, write_table
+                grid_project = LuminationProject(name="Table check", room=Room(length=6, width=4, wall_margin=0.5))
+                grid_project.regenerate_grid(rows=2, cols=3, wall_margin=0.5)
+                for index, point in enumerate(grid_project.points):
+                    point.record_reading(300.0 + 10 * index)
+                for suffix in (".xlsx", ".csv"):
+                    write_table(grid_project, str(root / f"table{suffix}"))
+                    values = read_table(str(root / f"table{suffix}"))
+                    reopened = project_from_table(values, "Reopened", 2.5, 3.0, 0.5)
+                    if sorted(p.lux for p in reopened.points) != sorted(p.lux for p in grid_project.points):
+                        raise RuntimeError(f"The {suffix} table did not round-trip correctly.")
+                checks.append("Excel and CSV tables")
+
+                # Comparison with a file, and a Romanian PDF with Unicode text.
+                compared = grid_project
+                apply_comparison(compared, str(root / "table.xlsx"))
+                from reporting.pdf_report import generate_pdf_report as _pdf
+                _pdf(compared, str(root / "raport.pdf"), lang="ro")
+                if (root / "raport.pdf").stat().st_size == 0:
+                    raise RuntimeError("Empty Romanian PDF")
+                checks.append("Comparison and Romanian PDF")
                 project.is_dirty = False
             result["success"] = True
             exit_code = 0

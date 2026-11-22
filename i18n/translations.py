@@ -5,7 +5,7 @@ Provides dynamic runtime language switching across all UI strings.
 """
 
 from __future__ import annotations
-from typing import Dict, Any, Callable, List
+from typing import Dict, Any, Callable, List, Optional
 from PySide6.QtCore import QObject, Signal
 
 
@@ -18,11 +18,8 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "menu_save_project": "Save Project",
         "menu_save_project_as": "Save Project As...",
         "menu_exit": "Exit",
-        "menu_csv_export": "CSV & Export",
-        "menu_import_csv": "Import Measurements from CSV...",
         "menu_export_csv": "Export Measurements to CSV...",
         "menu_export_pdf": "Export PDF Survey Report...",
-        "menu_export_image": "Export High-Resolution Map Image...",
         "menu_edit": "Edit",
         "menu_undo": "Undo",
         "menu_redo": "Redo",
@@ -31,7 +28,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "menu_toggle_sidebar": "Toggle Sidebar",
         "menu_language": "Language",
         "menu_help": "Help",
-        "menu_about": "About Lumination",
         "menu_shortcuts": "Keyboard Shortcuts",
         "menu_methodology": "Measurement Methodology",
 
@@ -54,14 +50,11 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "survey_point": "Point:",
         "survey_reading": "Reading:",
         "survey_save_next": "Save & Next",
-        "survey_prev": "Prev",
-        "survey_next": "Next",
         "survey_next_unmeasured": "Next Unmeasured",
         "survey_progress": "Survey Progress:",
         "survey_completed": "completed",
         "survey_possible_outlier": "Possible outlier:",
         "survey_record_next": "Record & next",
-        "survey_skip_point": "Skip point",
         "survey_pending": "Pending",
         "survey_recorded": "Recorded",
         "survey_select_point": "Select measurement point",
@@ -151,11 +144,8 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "menu_save_project": "Salvează proiect",
         "menu_save_project_as": "Salvează proiect ca...",
         "menu_exit": "Ieșire",
-        "menu_csv_export": "CSV și Export",
-        "menu_import_csv": "Importă măsurători din CSV...",
         "menu_export_csv": "Exportă măsurători în CSV...",
         "menu_export_pdf": "Exportă raport PDF...",
-        "menu_export_image": "Exportă imagine de înaltă rezoluție...",
         "menu_edit": "Editare",
         "menu_undo": "Anulează (Undo)",
         "menu_redo": "Refă (Redo)",
@@ -164,7 +154,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "menu_toggle_sidebar": "Comută panou lateral",
         "menu_language": "Limbă",
         "menu_help": "Ajutor",
-        "menu_about": "Despre Lumination",
         "menu_shortcuts": "Scurtături tastatură",
         "menu_methodology": "Metodologie măsurători",
 
@@ -187,14 +176,11 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "survey_point": "Punct:",
         "survey_reading": "Citire:",
         "survey_save_next": "Salvează și Următorul",
-        "survey_prev": "Anterior",
-        "survey_next": "Următor",
         "survey_next_unmeasured": "Următorul nemăsurat",
         "survey_progress": "Progres măsurători:",
         "survey_completed": "finalizat",
         "survey_possible_outlier": "Posibilă valoare aberantă:",
         "survey_record_next": "Înregistrează și continuă",
-        "survey_skip_point": "Omite punctul",
         "survey_pending": "În așteptare",
         "survey_recorded": "Înregistrat",
         "survey_select_point": "Selectați punctul de măsurare",
@@ -284,11 +270,8 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "menu_save_project": "Projekt speichern",
         "menu_save_project_as": "Projekt speichern unter...",
         "menu_exit": "Beenden",
-        "menu_csv_export": "CSV & Export",
-        "menu_import_csv": "Messungen aus CSV importieren...",
         "menu_export_csv": "Messungen in CSV exportieren...",
         "menu_export_pdf": "PDF-Messbericht exportieren...",
-        "menu_export_image": "Hochauflösendes Kartenbild exportieren...",
         "menu_edit": "Bearbeiten",
         "menu_undo": "Rückgängig (Undo)",
         "menu_redo": "Wiederholen (Redo)",
@@ -297,7 +280,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "menu_toggle_sidebar": "Seitenleiste umschalten",
         "menu_language": "Sprache",
         "menu_help": "Hilfe",
-        "menu_about": "Über Lumination",
         "menu_shortcuts": "Tastenkürzel",
         "menu_methodology": "Messmethodik",
 
@@ -320,14 +302,11 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "survey_point": "Punkt:",
         "survey_reading": "Messwert:",
         "survey_save_next": "Speichern & Weiter",
-        "survey_prev": "Zurück",
-        "survey_next": "Vor",
         "survey_next_unmeasured": "Nächster ungemessener",
         "survey_progress": "Messfortschritt:",
         "survey_completed": "abgeschlossen",
         "survey_possible_outlier": "Möglicher Ausreißer:",
         "survey_record_next": "Aufzeichnen & weiter",
-        "survey_skip_point": "Punkt überspringen",
         "survey_pending": "Ausstehend",
         "survey_recorded": "Erfasst",
         "survey_select_point": "Messpunkt auswählen",
@@ -411,6 +390,24 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
 }
 
 
+SUPPORTED_LANGUAGES = ("en", "ro", "de")
+LANGUAGE_NAMES = {"en": "English", "ro": "Română", "de": "Deutsch"}
+LOCALE_NAMES = {"en": "en_US", "ro": "ro_RO", "de": "de_DE"}
+SETTINGS_KEY = "ui/language"
+
+
+def _merge_catalog() -> None:
+    """Add the (en, ro, de) entries from i18n.strings to the per-language tables."""
+    from i18n.strings import STRINGS
+
+    for key, values in STRINGS.items():
+        for code, text in zip(SUPPORTED_LANGUAGES, values):
+            TRANSLATIONS.setdefault(code, {})[key] = text
+
+
+_merge_catalog()
+
+
 class TranslationManager(QObject):
     """Singleton Translation Manager emitting language_changed signals."""
     language_changed = Signal(str)
@@ -427,20 +424,92 @@ class TranslationManager(QObject):
             cls._instance = TranslationManager()
         return cls._instance
 
-    def set_language(self, lang_code: str) -> None:
-        """Switch current language ('en', 'ro', 'de')."""
-        if lang_code in TRANSLATIONS and lang_code != self.current_language:
+    def load_saved_language(self, settings=None) -> str:
+        """Switch to the language saved by the previous session (without re-saving it)."""
+        from PySide6.QtCore import QSettings
+
+        store = settings if settings is not None else QSettings()
+        code = str(store.value(SETTINGS_KEY, "en") or "en")
+        if code in SUPPORTED_LANGUAGES:
+            self.set_language(code, persist=False)
+        return self.current_language
+
+    def set_language(self, lang_code: str, persist: bool = True) -> None:
+        """Switch current language ('en', 'ro', 'de') and remember it for the next session."""
+        if lang_code not in TRANSLATIONS:
+            return
+        if persist:
+            from PySide6.QtCore import QSettings
+
+            store = QSettings()
+            store.setValue(SETTINGS_KEY, lang_code)
+            store.sync()
+        if lang_code != self.current_language:
             self.current_language = lang_code
             self.language_changed.emit(lang_code)
 
-    def tr(self, key: str) -> str:
-        """Translate a key into the active language, falling back to English or the key itself."""
-        lang_dict = TRANSLATIONS.get(self.current_language, TRANSLATIONS["en"])
+    def tr(self, key: str, lang: Optional[str] = None) -> str:
+        """Translate a key into the given or active language, falling back to English or the key itself."""
+        lang_dict = TRANSLATIONS.get(lang or self.current_language, TRANSLATIONS["en"])
         if key in lang_dict:
             return lang_dict[key]
         return TRANSLATIONS["en"].get(key, key)
 
 
-def tr(key: str) -> str:
-    """Global helper function to translate strings."""
-    return TranslationManager.get_instance().tr(key)
+def tr(key: str, lang: Optional[str] = None, /, **values: Any) -> str:
+    """Translate a key; ``lang`` overrides the active language and ``values`` fill {placeholders}."""
+    text = TranslationManager.get_instance().tr(key, lang)
+    return text.format(**values) if values else text
+
+
+def current_language() -> str:
+    return TranslationManager.get_instance().current_language
+
+
+def current_locale_name() -> str:
+    return LOCALE_NAMES[current_language()]
+
+
+_GRID_NOTE = None
+
+
+def display_note(note: str) -> str:
+    """Show notes that the app itself generated in the active language; user notes are unchanged."""
+    global _GRID_NOTE
+    import re
+
+    if not note:
+        return note
+    if _GRID_NOTE is None:
+        _GRID_NOTE = re.compile(r"^Grid \(Col (\d+), Row (\d+)\)$")
+    match = _GRID_NOTE.match(note) or re.match(r"^Grid \((\d+), (\d+)\)$", note)
+    if match:
+        return tr("note_grid", col=match.group(1), row=match.group(2))
+    if note == "Custom point":
+        return tr("note_custom_point")
+    if note == "Custom Sensor":
+        return tr("note_custom_sensor")
+    return note
+
+
+def display_device(name: str) -> str:
+    """Show instrument labels that the app itself stored in the active language."""
+    return {"Manual Entry": tr("device_manual_entry"), "Table Input": tr("device_table_input")}.get(name, name)
+
+
+class use_language:
+    """Temporarily render text in another language (for files), without notifying widgets."""
+
+    def __init__(self, lang: Optional[str]) -> None:
+        self.lang = lang if lang in SUPPORTED_LANGUAGES else None
+        self._previous: Optional[str] = None
+
+    def __enter__(self) -> "use_language":
+        manager = TranslationManager.get_instance()
+        self._previous = manager.current_language
+        if self.lang:
+            manager.current_language = self.lang
+        return self
+
+    def __exit__(self, *_exc) -> None:
+        TranslationManager.get_instance().current_language = self._previous

@@ -4,9 +4,8 @@ Features:
 - Edge-to-edge drawing covering 100% of the main canvas
 - Compact, icon-only action bar (Microsoft Office/Excel aesthetic, zero emojis)
 - In-place floating popup tag for instant clicking and editing lux values with consecutive Enter-to-advance
-- Hardware meter quick-connect action (Bluetooth & USB)
 - Hover inspection showing clean lux reading & coordinates (no P1/P2 clutter)
-- Keyboard shortcuts: Backspace/Delete to remove, Spacebar to capture hardware meter reading, Ctrl+Z/Ctrl+Y for Undo/Redo
+- Keyboard shortcuts: Backspace/Delete to remove, Ctrl+Z/Ctrl+Y for Undo/Redo
 - Smart placement mode with room dimension guides and symmetry snapping
 """
 
@@ -14,7 +13,7 @@ from __future__ import annotations
 import math
 from typing import Optional, Tuple, Dict, Any, List
 import numpy as np
-from PySide6.QtCore import Qt, Signal, QPoint, QPointF, QLocale
+from PySide6.QtCore import Qt, Signal, QPoint, QPointF, QLocale, QEvent
 from PySide6.QtGui import QCursor, QKeySequence, QAction
 from PySide6.QtWidgets import (
     QWidget,
@@ -46,7 +45,8 @@ from ui.icons import (
     create_zoom_in_icon,
     create_zoom_out_icon,
     create_reset_view_icon,
-    create_bluetooth_icon,
+    create_center_room_icon,
+    create_zoom_cursor,
 )
 from i18n.translations import tr, TranslationManager
 
@@ -55,6 +55,7 @@ class PointPopupEditor(QFrame):
     """Sleek in-place floating popup tag for entering/modifying lux readings directly on a point."""
     value_submitted = Signal(str, float)  # point_id, lux
     closed = Signal()
+    dismissed = Signal()  # the field lost focus without a value being entered
 
     def __init__(self, parent: QWidget) -> None:
         super().__init__(parent)
@@ -96,6 +97,7 @@ class PointPopupEditor(QFrame):
         self.txt_lux.setPlaceholderText("Lux")
         self.txt_lux.setMaximumWidth(75)
         self.txt_lux.returnPressed.connect(self._submit)
+        self.txt_lux.installEventFilter(self)
 
         lbl_suffix = QLabel("lx", self)
 
@@ -123,6 +125,14 @@ class PointPopupEditor(QFrame):
         self.txt_lux.setFocus()
         self.txt_lux.selectAll()
 
+    def eventFilter(self, watched, event) -> bool:
+        if watched is self.txt_lux and event.type() == QEvent.Type.FocusOut and self.isVisible():
+            # Clicking anywhere else closes the box and keeps the point's previous value.
+            if event.reason() not in (Qt.FocusReason.ActiveWindowFocusReason, Qt.FocusReason.PopupFocusReason):
+                self.hide()
+                self.dismissed.emit()
+        return super().eventFilter(watched, event)
+
     def _submit(self) -> None:
         """Submit the entered lux value and notify canvas."""
         text = self.txt_lux.text().strip()
@@ -139,17 +149,22 @@ class RoomCanvasWidget(QWidget):
     """Interactive room canvas widget with compact icon toolbar, hover tooltips, and in-place point editor."""
 
     point_selected = Signal(str)
+    point_deselected = Signal()
     point_edit_requested = Signal(str)
     point_add_requested = Signal(float, float)
     point_delete_requested = Signal(str)
     measurement_saved = Signal(str, float)
     cursor_position_changed = Signal(float, float)
-    hardware_connect_requested = Signal()
     undo_requested = Signal()
     redo_requested = Signal()
+    fullscreen_requested = Signal()
 
-    def __init__(self, parent: Optional[QWidget] = None) -> None:
+    ZOOM_STEP = 1.5  # each click with a zoom tool
+
+    def __init__(self, parent: Optional[QWidget] = None, show_fullscreen_button: bool = True,
+                 show_colorbar: bool = True) -> None:
         super().__init__(parent)
+        self.active_tool: Optional[str] = None  # None, "zoom_in", "zoom_out" or "add_point"
 
         self.project: Optional[LuminationProject] = None
         self.interp_result: Optional[InterpolationResult] = None
@@ -172,6 +187,13 @@ class RoomCanvasWidget(QWidget):
         self.figure.subplots_adjust(left=0.04, right=0.96, top=0.96, bottom=0.06)
 
         self.ax = self.figure.add_subplot(1, 1, 1)
+        # Colour bar on the right of the map: colours from the lowest to the highest value.
+        self.cax = None
+        if show_colorbar:
+            from mpl_toolkits.axes_grid1 import make_axes_locatable
+
+            self.cax = make_axes_locatable(self.ax).append_axes("right", size="3.5%", pad=0.35)
+            self.cax.set_visible(False)
 
         self.canvas = FigureCanvasQTAgg(self.figure)
         self.canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
@@ -185,12 +207,14 @@ class RoomCanvasWidget(QWidget):
         # 2. In-Place Floating Popup Editor
         self.popup_editor = PointPopupEditor(self)
         self.popup_editor.value_submitted.connect(self._on_popup_value_submitted)
+        self.popup_editor.dismissed.connect(self.deselect)
 
         # 3. Compact Icon-Only Action Bar (Microsoft Office style)
         self.action_bar = QFrame(self)
+        self.action_bar.setObjectName("mapActionBar")
         self.action_bar.setFixedHeight(32)
         self.action_bar.setStyleSheet("""
-            QFrame {
+            QFrame#mapActionBar {
                 background-color: #ffffff;
                 border: 1px solid #e2e8f0;
                 border-radius: 4px;
@@ -217,6 +241,18 @@ class RoomCanvasWidget(QWidget):
                 background-color: #dbeafe;
                 border-color: #3b82f6;
             }
+            QPushButton#doneButton {
+                min-width: 44px;
+                max-width: 120px;
+                font-size: 11px;
+                font-weight: 600;
+                color: #1d4ed8;
+                border-color: #93c5fd;
+            }
+            QPushButton#doneButton:disabled {
+                color: #94a3b8;
+                border-color: #e2e8f0;
+            }
         """)
 
         bar_layout = QHBoxLayout(self.action_bar)
@@ -226,47 +262,62 @@ class RoomCanvasWidget(QWidget):
         # Undo / Redo
         self.btn_undo = QPushButton(self)
         self.btn_undo.setIcon(create_undo_icon())
-        self.btn_undo.setToolTip("Undo (Ctrl+Z)")
         self.btn_undo.clicked.connect(self.undo_requested.emit)
 
         self.btn_redo = QPushButton(self)
         self.btn_redo.setIcon(create_redo_icon())
-        self.btn_redo.setToolTip("Redo (Ctrl+Y)")
         self.btn_redo.clicked.connect(self.redo_requested.emit)
 
-        # Add / Delete
+        # Add / Done / Delete
         self.btn_add_point = QPushButton(self)
         self.btn_add_point.setIcon(create_add_point_icon())
         self.btn_add_point.setCheckable(True)
-        self.btn_add_point.setToolTip("Add Custom Point (Click on map to place)")
-        self.btn_add_point.toggled.connect(self.set_placement_mode)
+        self.btn_add_point.clicked.connect(lambda checked: self.set_tool("add_point" if checked else None))
+
+        # "Done" ends Add point; it can only be pressed while Add point is on.
+        self.btn_done = QPushButton(self)
+        self.btn_done.setObjectName("doneButton")
+        self.btn_done.setEnabled(False)
+        self.btn_done.clicked.connect(lambda: self.set_tool(None))
 
         self.btn_delete_point = QPushButton(self)
         self.btn_delete_point.setIcon(create_delete_icon())
-        self.btn_delete_point.setToolTip("Delete Selected Point (Backspace / Del)")
         self.btn_delete_point.clicked.connect(self._delete_selected_point)
 
-        # Hardware Meter Connect Button
-        self.btn_hardware = QPushButton(self)
-        self.btn_hardware.setIcon(create_bluetooth_icon())
-        self.btn_hardware.setToolTip("Connect Physical Lux Meter (USB / Bluetooth)")
-        self.btn_hardware.clicked.connect(self.hardware_connect_requested.emit)
-
-        # Zoom Controls
+        # Zoom tools: switch one on, then click the map where you want to zoom.
         self.btn_zoom_in = QPushButton(self)
         self.btn_zoom_in.setIcon(create_zoom_in_icon())
-        self.btn_zoom_in.setToolTip("Zoom In (+)")
-        self.btn_zoom_in.clicked.connect(lambda: self._zoom(1.2))
+        self.btn_zoom_in.setCheckable(True)
+        self.btn_zoom_in.clicked.connect(lambda checked: self.set_tool("zoom_in" if checked else None))
 
         self.btn_zoom_out = QPushButton(self)
         self.btn_zoom_out.setIcon(create_zoom_out_icon())
-        self.btn_zoom_out.setToolTip("Zoom Out (-)")
-        self.btn_zoom_out.clicked.connect(lambda: self._zoom(0.8))
+        self.btn_zoom_out.setCheckable(True)
+        self.btn_zoom_out.clicked.connect(lambda checked: self.set_tool("zoom_out" if checked else None))
 
+        # Center room: show the whole room again.
         self.btn_reset_view = QPushButton(self)
-        self.btn_reset_view.setIcon(create_reset_view_icon())
-        self.btn_reset_view.setToolTip("Reset View (1:1)")
+        self.btn_reset_view.setIcon(create_center_room_icon())
         self.btn_reset_view.clicked.connect(self.reset_view)
+        self.btn_center_room = self.btn_reset_view
+
+        # Full screen: the graph alone in a large window.
+        self.btn_fullscreen = QPushButton(self)
+        self.btn_fullscreen.setIcon(create_reset_view_icon())
+        self.btn_fullscreen.clicked.connect(self.fullscreen_requested.emit)
+        self.btn_fullscreen.setVisible(show_fullscreen_button)
+        self._zoom_in_cursor = create_zoom_cursor(True)
+        self._zoom_out_cursor = create_zoom_cursor(False)
+
+        self._apply_tooltips()
+        TranslationManager.get_instance().language_changed.connect(self._on_language_changed)
+        # Toolbar labels appear as soon as the mouse is over a tool (no tooltip delay).
+        self._toolbar_buttons = (
+            self.btn_undo, self.btn_redo, self.btn_add_point, self.btn_done, self.btn_delete_point,
+            self.btn_zoom_in, self.btn_zoom_out, self.btn_reset_view, self.btn_fullscreen,
+        )
+        for button in self._toolbar_buttons:
+            button.installEventFilter(self)
 
         # Compact status label
         self.lbl_cursor_status = QLabel("", self)
@@ -276,12 +327,13 @@ class RoomCanvasWidget(QWidget):
         bar_layout.addWidget(self.btn_redo)
         bar_layout.addSpacing(6)
         bar_layout.addWidget(self.btn_add_point)
+        bar_layout.addWidget(self.btn_done)
         bar_layout.addWidget(self.btn_delete_point)
-        bar_layout.addWidget(self.btn_hardware)
         bar_layout.addSpacing(6)
         bar_layout.addWidget(self.btn_zoom_in)
         bar_layout.addWidget(self.btn_zoom_out)
         bar_layout.addWidget(self.btn_reset_view)
+        bar_layout.addWidget(self.btn_fullscreen)
         bar_layout.addStretch()
         bar_layout.addWidget(self.lbl_cursor_status)
 
@@ -291,6 +343,33 @@ class RoomCanvasWidget(QWidget):
         main_layout.setSpacing(2)
         main_layout.addWidget(self.action_bar)
         main_layout.addWidget(self.canvas, stretch=1)
+
+    def eventFilter(self, watched, event) -> bool:
+        """Show a toolbar button's label immediately when the mouse enters it."""
+        if watched in getattr(self, "_toolbar_buttons", ()) and event.type() == QEvent.Type.Enter:
+            tip = watched.toolTip()
+            if tip:
+                QToolTip.showText(watched.mapToGlobal(QPoint(0, watched.height() + 2)), tip, watched)
+        return super().eventFilter(watched, event)
+
+    def _apply_tooltips(self) -> None:
+        self.btn_undo.setToolTip(tr("canvas_tip_undo", key=QKeySequence(QKeySequence.StandardKey.Undo).toString(QKeySequence.SequenceFormat.NativeText)))
+        self.btn_redo.setToolTip(tr("canvas_tip_redo", key=QKeySequence(QKeySequence.StandardKey.Redo).toString(QKeySequence.SequenceFormat.NativeText)))
+        self.btn_add_point.setToolTip(tr("canvas_tip_add_point"))
+        self.btn_delete_point.setToolTip(tr("canvas_tip_delete_point"))
+        self.btn_zoom_in.setToolTip(tr("canvas_tip_zoom_in"))
+        self.btn_zoom_out.setToolTip(tr("canvas_tip_zoom_out"))
+        self.btn_reset_view.setToolTip(tr("canvas_tip_center_room"))
+        self.btn_fullscreen.setToolTip(tr("canvas_tip_fullscreen"))
+        self.btn_done.setText(tr("canvas_done"))
+        self.btn_done.setToolTip(tr("canvas_tip_done"))
+        self.popup_editor.txt_lux.setPlaceholderText(tr("canvas_tooltip_lux"))
+
+    def _on_language_changed(self, *_args) -> None:
+        self._apply_tooltips()
+        self.lbl_cursor_status.clear()
+        if self.project:
+            self.redraw()
 
     def set_project(
         self,
@@ -316,34 +395,60 @@ class RoomCanvasWidget(QWidget):
         self.btn_add_point.setEnabled(enabled)
         self.btn_delete_point.setEnabled(enabled and self.selected_point_id is not None)
         if not enabled and self.placement_mode:
-            self.set_placement_mode(False)
+            self.set_tool(None)
 
     def set_recording_enabled(self, enabled: bool) -> None:
         self.recording_enabled = enabled
         if not enabled:
             self.popup_editor.hide()
 
-    def set_placement_mode(self, enabled: bool) -> None:
-        """Toggle interactive sensor placement mode with symmetry snapping."""
-        if enabled and not self.editing_enabled:
-            self.btn_add_point.setChecked(False)
-            return
-        self.placement_mode = enabled
-        self.btn_add_point.setChecked(enabled)
+    def set_tool(self, tool: Optional[str]) -> None:
+        """Switch on one map tool (zoom in, zoom out or add point), or none; only one at a time."""
+        if tool == "add_point" and not self.editing_enabled:
+            tool = None
+        was_placing = self.placement_mode
+        self.active_tool = tool
+        self.placement_mode = tool == "add_point"
+        self.btn_add_point.setChecked(tool == "add_point")
+        self.btn_zoom_in.setChecked(tool == "zoom_in")
+        self.btn_zoom_out.setChecked(tool == "zoom_out")
+        self.btn_done.setEnabled(tool == "add_point")
         self.popup_editor.hide()
-        if enabled:
-            self.setCursor(Qt.CursorShape.CrossCursor)
+        cursor = {
+            "zoom_in": self._zoom_in_cursor,
+            "zoom_out": self._zoom_out_cursor,
+            "add_point": QCursor(Qt.CursorShape.CrossCursor),
+        }.get(tool)
+        if cursor is not None:
+            self.canvas.setCursor(cursor)
         else:
-            self.setCursor(Qt.CursorShape.ArrowCursor)
+            self.canvas.unsetCursor()
+        if not self.placement_mode:
             self._preview_pos = None
             self._snapped_pos = None
             self._snap_guides = []
             self._snap_label = None
+        if was_placing != self.placement_mode:
+            self.redraw()
 
-        self.redraw()
+    def set_placement_mode(self, enabled: bool) -> None:
+        """Turn the Add point tool on or off (it stays on until Done)."""
+        self.set_tool("add_point" if enabled else None)
+
+    def zoom_at(self, x: float, y: float, factor: float) -> None:
+        """Zoom by `factor` (>1 in, <1 out) keeping the clicked map position under the cursor."""
+        xlim = self.ax.get_xlim()
+        ylim = self.ax.get_ylim()
+        new_w = (xlim[1] - xlim[0]) / factor
+        new_h = (ylim[1] - ylim[0]) / factor
+        rel_x = (x - xlim[0]) / (xlim[1] - xlim[0])
+        rel_y = (y - ylim[0]) / (ylim[1] - ylim[0])
+        self.ax.set_xlim(x - rel_x * new_w, x + (1 - rel_x) * new_w)
+        self.ax.set_ylim(y - rel_y * new_h, y + (1 - rel_y) * new_h)
+        self.canvas.draw_idle()
 
     def reset_view(self) -> None:
-        """Reset zoom to default room view."""
+        """Center room: show the whole room again."""
         if not self.project:
             return
         r = self.project.room
@@ -386,7 +491,7 @@ class RoomCanvasWidget(QWidget):
             return
         elif event.key() == Qt.Key.Key_Escape:
             if self.placement_mode:
-                self.set_placement_mode(False)
+                self.set_tool(None)
             self.popup_editor.hide()
             event.accept()
             return
@@ -433,9 +538,9 @@ class RoomCanvasWidget(QWidget):
             return
 
         # 2. Normal Mode Hover Inspection (Clean lux & coordinates, NO P1/P2 prefix)
-        nearest_pt = self._find_nearest_point(rx, ry, max_dist=0.20)
+        nearest_pt = self._find_nearest_point(rx, ry)
         if nearest_pt:
-            val_str = f"{nearest_pt.lux:.1f} lx" if nearest_pt.is_measured and nearest_pt.lux is not None else "Unmeasured"
+            val_str = f"{nearest_pt.lux:.1f} lx" if nearest_pt.is_measured and nearest_pt.lux is not None else tr("canvas_unmeasured")
             self.lbl_cursor_status.setText(
                 f"{val_str} (X: {nearest_pt.x:.2f} m, Y: {nearest_pt.y:.2f} m)"
             )
@@ -450,7 +555,7 @@ class RoomCanvasWidget(QWidget):
         est_lux = self._sample_interpolated_lux(rx, ry)
         if est_lux is not None:
             self.lbl_cursor_status.setText(
-                f"Estimated: {est_lux:.1f} lx (X: {rx:.2f} m, Y: {ry:.2f} m)"
+                tr("canvas_estimated", lux=f"{est_lux:.1f}", x=f"{rx:.2f}", y=f"{ry:.2f}")
             )
         else:
             self.lbl_cursor_status.setText(f"X: {rx:.2f} m, Y: {ry:.2f} m")
@@ -471,11 +576,11 @@ class RoomCanvasWidget(QWidget):
         if abs(rx - cx) <= snap_threshold:
             snapped_x = cx
             self._snap_guides.append(((cx, 0), (cx, room.width)))
-            snap_reasons.append("Center X")
+            snap_reasons.append(tr("canvas_snap_center_x"))
         if abs(ry - cy) <= snap_threshold:
             snapped_y = cy
             self._snap_guides.append(((0, cy), (room.length, cy)))
-            snap_reasons.append("Center Y")
+            snap_reasons.append(tr("canvas_snap_center_y"))
 
         # Symmetry / Mirror of other points
         for p in self.project.points:
@@ -486,19 +591,19 @@ class RoomCanvasWidget(QWidget):
                 snapped_x = sym_x
                 snapped_y = sym_y
                 self._snap_guides.append(((p.x, p.y), (sym_x, sym_y)))
-                snap_reasons.append("Symmetry")
+                snap_reasons.append(tr("canvas_snap_symmetry"))
                 break
             elif math.hypot(rx - sym_x, ry - p.y) <= snap_threshold:
                 snapped_x = sym_x
                 snapped_y = p.y
                 self._snap_guides.append(((p.x, p.y), (sym_x, p.y)))
-                snap_reasons.append("H-Mirror")
+                snap_reasons.append(tr("canvas_snap_h_mirror"))
                 break
             elif math.hypot(rx - p.x, ry - sym_y) <= snap_threshold:
                 snapped_x = p.x
                 snapped_y = sym_y
                 self._snap_guides.append(((p.x, p.y), (p.x, sym_y)))
-                snap_reasons.append("V-Mirror")
+                snap_reasons.append(tr("canvas_snap_v_mirror"))
                 break
 
         self._preview_pos = (rx, ry)
@@ -542,17 +647,27 @@ class RoomCanvasWidget(QWidget):
 
         rx, ry = float(event.xdata), float(event.ydata)
 
-        # Placement Mode: add point
+        # Zoom tools: each click zooms at the clicked spot.
+        if self.active_tool in ("zoom_in", "zoom_out"):
+            factor = self.ZOOM_STEP if self.active_tool == "zoom_in" else 1.0 / self.ZOOM_STEP
+            self.zoom_at(rx, ry, factor)
+            return
+
+        # Add point stays on after each point until Done is pressed.
         if self.placement_mode:
             if self.project.room.is_inside(rx, ry):
                 final_x, final_y = self._snapped_pos or (rx, ry)
                 self.point_add_requested.emit(final_x, final_y)
-                self.set_placement_mode(False)
             return
 
         # Normal Mode: Check if point clicked
-        clicked_pt = self._find_nearest_point(rx, ry, max_dist=0.20)
+        clicked_pt = self._find_nearest_point(rx, ry)
         if clicked_pt:
+            if getattr(event, "dblclick", False) and self.editing_enabled:
+                # Double-click opens the full point editor (coordinates, lux, notes);
+                # a single click keeps using the quick inline popup below.
+                self.point_edit_requested.emit(clicked_pt.id)
+                return
             self.selected_point_id = clicked_pt.id
             self.point_selected.emit(clicked_pt.id)
             if self.recording_enabled and (not clicked_pt.is_measured or self.editing_enabled):
@@ -561,16 +676,27 @@ class RoomCanvasWidget(QWidget):
                 self.popup_editor.hide()
             self.redraw()
         else:
-            self.popup_editor.hide()
+            self.deselect()
+
+    def deselect(self) -> None:
+        """Clicked away from a point: close the reading box, unselect it, keep its value."""
+        self.popup_editor.hide()
+        if self.selected_point_id is not None:
+            self.selected_point_id = None
+            self.btn_delete_point.setEnabled(False)
             self.redraw()
+            self.point_deselected.emit()
 
     def _open_popup_for_point(self, point: MeasurementPoint) -> None:
         """Convert point (x, y) coordinates to display pixels and show floating editor."""
-        disp_x, disp_y = self.ax.transData.transform((point.x, point.y))
-        canvas_height = self.canvas.height()
-        qt_x = int(disp_x)
-        qt_y = int(canvas_height - disp_y)
-        self.popup_editor.show_for_point(point, QPoint(qt_x, qt_y))
+        self.popup_editor.show_for_point(point, self._data_to_widget(point.x, point.y))
+
+    def _data_to_widget(self, x: float, y: float) -> QPoint:
+        """Map position (metres) -> position inside this widget, on scaled screens too."""
+        disp_x, disp_y = self.ax.transData.transform((x, y))
+        ratio = self.canvas.devicePixelRatioF() or 1.0
+        on_canvas = QPoint(int(round(disp_x / ratio)), int(round(self.canvas.height() - disp_y / ratio)))
+        return self.canvas.mapTo(self, on_canvas)
 
     def _on_popup_value_submitted(self, point_id: str, lux_val: float) -> None:
         """Request a save; navigation is decided centrally by MainWindow."""
@@ -578,14 +704,20 @@ class RoomCanvasWidget(QWidget):
         self.popup_editor.hide()
         self.redraw()
 
-    def _find_nearest_point(self, x: float, y: float, max_dist: float = 0.20) -> Optional[MeasurementPoint]:
+    HIT_RADIUS_PX = 12  # how close (on screen) a click must be to select a point
+
+    def _find_nearest_point(self, x: float, y: float, max_dist: Optional[float] = None) -> Optional[MeasurementPoint]:
+        """Closest point within HIT_RADIUS_PX screen pixels of (x, y), at any zoom level."""
         if not self.project:
             return None
+        ratio = self.canvas.devicePixelRatioF() or 1.0
+        click_x, click_y = self.ax.transData.transform((x, y))
         best_pt = None
-        best_d = max_dist
+        best_d = float(self.HIT_RADIUS_PX)
         for p in self.project.points:
-            d = math.hypot(p.x - x, p.y - y)
-            if d < best_d:
+            px, py = self.ax.transData.transform((p.x, p.y))
+            d = math.hypot(px - click_x, py - click_y) / ratio
+            if d <= best_d:
                 best_d = d
                 best_pt = p
         return best_pt
@@ -598,7 +730,7 @@ class RoomCanvasWidget(QWidget):
         room_key = (id(self.project), self.project.room.length, self.project.room.width)
         view = (self.ax.get_xlim(), self.ax.get_ylim()) if room_key == self._view_room_key else None
 
-        render_room_map(
+        rendered = render_room_map(
             ax=self.ax,
             project=self.project,
             interp_result=self.interp_result,
@@ -608,7 +740,14 @@ class RoomCanvasWidget(QWidget):
             snapped_pos=self._snapped_pos,
             snap_guides=self._snap_guides,
             snap_label=self._snap_label,
+            colorbar_ax=self.cax,
         )
+        if self.cax is not None:
+            # Shown only while the map has colours to explain.
+            has_colours = rendered.get("mesh") is not None and self.project.visualization_settings.show_colorbar
+            if not has_colours:
+                self.cax.clear()
+            self.cax.set_visible(has_colours)
 
         if view is not None:
             self.ax.set_xlim(view[0])

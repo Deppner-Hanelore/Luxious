@@ -10,6 +10,7 @@ from typing import List, Sequence, Tuple
 import numpy as np
 
 from models.measurement import MeasurementPoint
+from i18n.translations import tr
 from models.room import Room
 
 
@@ -66,17 +67,16 @@ def evaluate_spatial_outliers(
                 # Check if exceeds relative threshold and absolute threshold (> 100 lx)
                 if rel_diff >= relative_threshold and abs(diff_lux) >= 75.0:
                     p.is_possible_outlier = True
-                    direction = "higher" if diff_lux > 0 else "lower"
-                    p.outlier_reason = (
-                        f"Possible outlier: Reading ({p.lux:.0f} lx) is {abs(rel_diff)*100:.0f}% {direction} "
-                        f"than {len(neighbours)} neighbouring points (Median: {local_median:.0f} lx)."
+                    direction = tr("outlier_direction_higher") if diff_lux > 0 else tr("outlier_direction_lower")
+                    p.outlier_reason = tr(
+                        "outlier_relative", lux=f"{p.lux:.0f}", pct=f"{abs(rel_diff)*100:.0f}",
+                        direction=direction, count=len(neighbours), median=f"{local_median:.0f}",
                     )
                     flagged.append(p)
                 elif local_std > 0 and abs(p.lux - local_mean) > 2.8 * local_std and abs(diff_lux) >= 75.0:
                     p.is_possible_outlier = True
-                    p.outlier_reason = (
-                        f"Possible outlier: Reading ({p.lux:.0f} lx) differs significantly from surrounding points "
-                        f"(Local Mean: {local_mean:.0f} lx, σ: {local_std:.1f} lx)."
+                    p.outlier_reason = tr(
+                        "outlier_local", lux=f"{p.lux:.0f}", mean=f"{local_mean:.0f}", std=f"{local_std:.1f}",
                     )
                     flagged.append(p)
                 else:

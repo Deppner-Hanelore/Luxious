@@ -8,11 +8,12 @@ Renders ultra-clean, full-viewport 2D room plans:
 
 from __future__ import annotations
 import copy
+import math
 from typing import Optional, List, Tuple, Dict, Any
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle, Circle, Polygon
-from matplotlib.ticker import MultipleLocator
+from matplotlib.ticker import FixedLocator, FuncFormatter, MultipleLocator
 from matplotlib.figure import Figure
 from matplotlib.axes import Axes
 from matplotlib.colors import Normalize
@@ -23,6 +24,20 @@ from analysis.interpolation import InterpolationResult, reconstruct_illuminance_
 from analysis.contours import generate_isolux_levels
 from analysis.statistics import calculate_statistics
 from i18n.translations import tr
+
+
+def _metre_ticks(size: float) -> List[float]:
+    """0, 1, 2, ... metres up to the room size, plus the room size itself when it is not whole."""
+    ticks = [float(value) for value in range(0, int(math.floor(size + 1e-9)) + 1)]
+    if size - ticks[-1] > 0.05:
+        ticks.append(round(float(size), 2))
+    return ticks
+
+
+def _metre_label(value: float, _position=None) -> str:
+    if value < -1e-9:
+        return ""
+    return f"{value:g}"
 
 
 def render_room_map(
@@ -67,22 +82,6 @@ def render_room_map(
     )
     ax.add_patch(floor_rect)
 
-    # Wall perimeter margin
-    if settings.show_wall_margins and room.wall_margin > 0 and not placement_mode:
-        wm = room.wall_margin
-        if 2 * wm < room.length and 2 * wm < room.width:
-            margin_rect = Rectangle(
-                (wm, wm),
-                room.length - 2 * wm,
-                room.width - 2 * wm,
-                facecolor="none",
-                edgecolor="#cbd5e1",
-                linestyle="--",
-                linewidth=0.8,
-                zorder=2,
-            )
-            ax.add_patch(margin_rect)
-
     # 3. Compute or use Interpolation
     mesh_handle = None
     contour_handle = None
@@ -110,7 +109,7 @@ def render_room_map(
                 room,
                 resolution=100,
                 method=settings.interpolation_method,
-                extrapolate_to_walls=False,
+                extrapolate_to_walls=True,
                 allow_negative=display_mode == "difference",
             )
 
@@ -121,8 +120,10 @@ def render_room_map(
 
             valid_z = grid_z[~np.isnan(grid_z)]
             if len(valid_z) > 0:
-                vmin = float(np.min(valid_z))
-                vmax = float(np.max(valid_z))
+                # Colour scale from the real readings only, never from estimated cells.
+                measured_values = [float(p.lux) for p in valid_points if p.lux is not None]
+                vmin = float(min(measured_values)) if measured_values else float(np.min(valid_z))
+                vmax = float(max(measured_values)) if measured_values else float(np.max(valid_z))
                 if abs(vmax - vmin) < 1.0:
                     vmax = vmin + 10.0
                 norm = Normalize(vmin=vmin, vmax=vmax)
@@ -166,8 +167,8 @@ def render_room_map(
                 # Colorbar
                 if settings.show_colorbar and mesh_handle is not None and colorbar_ax is not None:
                     colorbar_ax.clear()
-                    cb = plt.colorbar(mesh_handle, cax=colorbar_ax, orientation="vertical")
-                    cb_label = "Lux (lx)" if display_mode != "difference" else "Δ Lux (lx)"
+                    cb = colorbar_ax.figure.colorbar(mesh_handle, cax=colorbar_ax, orientation="vertical")
+                    cb_label = tr("canvas_colorbar_lux") if display_mode != "difference" else tr("canvas_colorbar_delta")
                     cb.set_label(cb_label, fontsize=8, fontweight="bold", color="#334155")
                     cb.ax.tick_params(labelsize=7.5)
 
@@ -260,18 +261,46 @@ def render_room_map(
                 )
                 ax.add_patch(glow)
 
-    # 6. Grid Lines & Ticks
+    # 5b. Permanent lux labels next to each point (Layers > "Permanent Lux Labels")
+    if settings.show_values and not placement_mode:
+        for p in valid_points:
+            if p.lux is None:
+                continue
+            label = f"{p.lux:+.0f}" if display_mode == "difference" else f"{p.lux:.0f}"
+            ax.annotate(
+                label,
+                xy=(p.x, p.y),
+                xytext=(0, 7),
+                textcoords="offset points",
+                ha="center",
+                va="bottom",
+                fontsize=7.5,
+                fontweight="bold",
+                color="#0f172a",
+                bbox=dict(boxstyle="round,pad=0.15", fc="#ffffff", ec="none", alpha=0.75),
+                zorder=18,
+            )
+
+    # 6. Metric grid: one line per metre, starting at the walls (0), drawn above the floor and the
+    # colour map so it stays visible, and only inside the room. Fully hidden when switched off.
+    ax.grid(False)
+    x_ticks = _metre_ticks(room.length)
+    y_ticks = _metre_ticks(room.width)
     if settings.show_grid and not placement_mode:
-        ax.grid(True, linestyle=":", color="#e2e8f0", linewidth=0.6, alpha=0.8, zorder=2)
-    else:
-        ax.grid(False)
+        for x_value in x_ticks[1:-1]:
+            ax.plot([x_value, x_value], [0, room.width], color="#475569", linewidth=0.7, alpha=0.55, zorder=6)
+        for y_value in y_ticks[1:-1]:
+            ax.plot([0, room.length], [y_value, y_value], color="#475569", linewidth=0.7, alpha=0.55, zorder=6)
 
     ax.set_xlabel(tr("canvas_x_axis"), fontsize=8.5, fontweight="bold", color="#475569")
     ax.set_ylabel(tr("canvas_y_axis"), fontsize=8.5, fontweight="bold", color="#475569")
-    ax.xaxis.set_major_locator(MultipleLocator(1.0))
-    ax.yaxis.set_major_locator(MultipleLocator(1.0))
-    ax.xaxis.set_minor_locator(MultipleLocator(0.5))
-    ax.yaxis.set_minor_locator(MultipleLocator(0.5))
+    # Axis numbers start at the wall (0) and end at the room size; nothing negative is labelled.
+    ax.xaxis.set_major_locator(FixedLocator(x_ticks))
+    ax.yaxis.set_major_locator(FixedLocator(y_ticks))
+    ax.xaxis.set_major_formatter(FuncFormatter(_metre_label))
+    ax.yaxis.set_major_formatter(FuncFormatter(_metre_label))
+    ax.xaxis.set_minor_locator(FixedLocator([]))
+    ax.yaxis.set_minor_locator(FixedLocator([]))
     ax.tick_params(axis="both", which="major", labelsize=8, colors="#475569")
 
     # Fallback notice if collinear
@@ -279,7 +308,7 @@ def render_room_map(
         ax.text(
             0.02,
             0.02,
-            f"Notice: {interp_result.fallback_reason}",
+            tr("canvas_notice", reason=interp_result.fallback_reason),
             transform=ax.transAxes,
             fontsize=7.5,
             color="#475569",

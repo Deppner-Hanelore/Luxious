@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
 
 from models.project import LuminationProject
 from models.measurement import MeasurementPoint
-from i18n.translations import tr, TranslationManager
+from i18n.translations import tr, TranslationManager, display_note
 
 
 class MeasurementTableModel(QAbstractTableModel):
@@ -83,7 +83,7 @@ class MeasurementTableModel(QAbstractTableModel):
             elif col == 6:
                 return p.timestamp or ""
             elif col == 7:
-                return p.notes
+                return display_note(p.notes) if role == Qt.ItemDataRole.DisplayRole else p.notes
 
         elif role == Qt.ItemDataRole.TextAlignmentRole:
             if col in (1, 2, 3, 4, 5):
@@ -163,6 +163,7 @@ class MeasurementTableWidget(QWidget):
     def retranslate_ui(self) -> None:
         """Refresh headers when language changes."""
         self.model.headerDataChanged.emit(Qt.Orientation.Horizontal, 0, self.model.columnCount() - 1)
+        self.model.layoutChanged.emit()
 
     def set_project(self, project: LuminationProject) -> None:
         self.project = project

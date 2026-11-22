@@ -1,5 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""PyInstaller specification file for Lumination Desktop Application.
+"""PyInstaller specification file for the Luxious desktop application.
 
 Packages all core and lazy-loaded modules (PySide6, NumPy, SciPy, Matplotlib, ReportLab)
 into a standalone Windows desktop executable with zero console window.
@@ -25,6 +25,7 @@ hidden_imports = [
     'scipy.interpolate',
     'scipy.spatial',
     'scipy.spatial.distance',
+    'scipy.ndimage',
     'scipy.special',
     
     # Matplotlib
@@ -65,20 +66,16 @@ hidden_imports = [
     'visualization.map_plotter',
     'visualization.chart_plotter',
     'visualization.color_maps',
-    'measurement_sources.base',
-    'measurement_sources.manual',
-    'measurement_sources.mock',
-    'measurement_sources.usb_serial',
-    'measurement_sources.bluetooth_meter',
-    'measurement_sources.device_session',
     'persistence.project_io',
     'persistence.csv_io',
+    'persistence.table_io',
     'persistence.recovery',
     'reporting.pdf_report',
     'reporting.chart_exporter',
     'ui.styles',
     'ui.main_window',
     'ui.room_canvas',
+    'ui.graph_window',
     'ui.survey_mode_widget',
     'ui.start_screen',
     'ui.workflow_controller',
@@ -91,12 +88,15 @@ hidden_imports = [
     'ui.dialogs.grid_generator_dialog',
     'ui.dialogs.point_edit_dialog',
     'ui.dialogs.export_dialog',
-    'ui.dialogs.hardware_connection_dialog',
     'ui.dialogs.survey_setup_dialog',
     'ui.dialogs.import_preview_dialog',
+    'ui.dialogs.table_setup_dialog',
+    'openpyxl',
     'i18n.translations',
+    'i18n.strings',
     'utils.undo_commands',
     'utils.build_smoke',
+    'utils.app_info',
     'ui.icons',
 ]
 
@@ -104,7 +104,7 @@ a = Analysis(
     [os.path.join(project_dir, 'main.py')],
     pathex=[project_dir],
     binaries=[],
-    datas=[],
+    datas=[(os.path.join(project_dir, 'assets', 'luxious.ico'), 'assets')],
     hiddenimports=hidden_imports,
     hookspath=[],
     hooksconfig={},
@@ -120,7 +120,8 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name='Lumination',
+    name='Luxious',
+    icon=os.path.join(project_dir, 'assets', 'luxious.ico'),  # app icon (from Luxious.ico)
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -140,5 +141,5 @@ coll = COLLECT(
     strip=False,
     upx=False,
     upx_exclude=[],
-    name='Lumination',
+    name='Luxious',
 )

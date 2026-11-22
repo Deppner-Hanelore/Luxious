@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 
 from models.measurement import MeasurementPoint
 from models.room import Room
+from i18n.translations import tr
 
 
 class PointEditDialog(QDialog):
@@ -33,13 +34,13 @@ class PointEditDialog(QDialog):
         super().__init__(parent)
         self.point = point
         self.room = room
-        self.setWindowTitle(f"Edit Measurement — {point.id}")
+        self.setWindowTitle(tr("point_edit_title", point=point.id))
         self.setMinimumWidth(360)
 
         layout = QVBoxLayout(self)
         layout.setSpacing(10)
 
-        group = QGroupBox(f"Point {point.id} Details", self)
+        group = QGroupBox(tr("point_edit_group", point=point.id), self)
         g_layout = QGridLayout(group)
         g_layout.setSpacing(6)
 
@@ -85,20 +86,22 @@ class PointEditDialog(QDialog):
             "expected": self.spin_exp.value(),
         }
 
-        g_layout.addWidget(QLabel("X Coordinate:"), 0, 0)
+        g_layout.addWidget(QLabel(tr("point_edit_x")), 0, 0)
         g_layout.addWidget(self.spin_x, 0, 1)
-        g_layout.addWidget(QLabel("Y Coordinate:"), 1, 0)
+        g_layout.addWidget(QLabel(tr("point_edit_y")), 1, 0)
         g_layout.addWidget(self.spin_y, 1, 1)
-        g_layout.addWidget(QLabel("<b>Measured Lux:</b>"), 2, 0)
+        g_layout.addWidget(QLabel(tr("point_edit_lux")), 2, 0)
         g_layout.addWidget(self.spin_lux, 2, 1)
-        g_layout.addWidget(QLabel("Expected / DIALux Lux:"), 3, 0)
+        g_layout.addWidget(QLabel(tr("point_edit_expected")), 3, 0)
         g_layout.addWidget(self.spin_exp, 3, 1)
-        g_layout.addWidget(QLabel("Notes:"), 4, 0)
+        g_layout.addWidget(QLabel(tr("point_edit_notes")), 4, 0)
         g_layout.addWidget(self.txt_notes, 4, 1)
 
         button_box = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel, self
         )
+        button_box.button(QDialogButtonBox.StandardButton.Ok).setText(tr("btn_ok"))
+        button_box.button(QDialogButtonBox.StandardButton.Cancel).setText(tr("btn_cancel"))
         button_box.accepted.connect(self._on_accept)
         button_box.rejected.connect(self.reject)
 

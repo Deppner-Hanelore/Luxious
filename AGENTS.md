@@ -1,6 +1,6 @@
 # Working in Luxious
 
-Luxious (Lumination) is a Python 3.10+ PySide6 desktop application. Read the
+Luxious is a Python 3.10+ PySide6 desktop application. Read the
 affected modules and tests before changing behavior. Keep physical measurements,
 expected values, numerical reconstructions, and simulated meter data distinct.
 
