@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QRadioButton,
     QComboBox,
     QDialogButtonBox,
+    QWidget,
 )
 
 from models.project import LuminationProject

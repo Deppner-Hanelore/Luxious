@@ -553,6 +553,11 @@ class RoomCanvasWidget(QWidget):
         # Normal Mode: Check if point clicked
         clicked_pt = self._find_nearest_point(rx, ry, max_dist=0.20)
         if clicked_pt:
+            if getattr(event, "dblclick", False) and self.editing_enabled:
+                # Double-click opens the full point editor (coordinates, lux, notes);
+                # a single click keeps using the quick inline popup below.
+                self.point_edit_requested.emit(clicked_pt.id)
+                return
             self.selected_point_id = clicked_pt.id
             self.point_selected.emit(clicked_pt.id)
             if self.recording_enabled and (not clicked_pt.is_measured or self.editing_enabled):
